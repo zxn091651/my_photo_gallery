@@ -4,14 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>zxn's Photo Gallery</title>
-    <link rel="stylesheet" href="./styles.css?v=20260704-5" />
+    <link rel="stylesheet" href="./styles.css?v=20260704-6" />
   </head>
   <body>
     <main class="shell">
       <section class="topbar" aria-label="图库状态">
         <div>
           <h1>zxn's Photo Gallery</h1>
-          <p id="statusText">正在连接本机后端...</p>
+          <p id="statusText" class="connection-status is-bad">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span>后端连接状态</span>
+          </p>
         </div>
       </section>
 
@@ -40,7 +43,7 @@
       <div id="viewerStage" class="viewer-stage"></div>
     </dialog>
 
-    <script src="./config.js?v=20260704-5"></script>
-    <script type="module" src="./app.js?v=20260704-5"></script>
+    <script src="./config.js?v=20260704-6"></script>
+    <script type="module" src="./app.js?v=20260704-6"></script>
   </body>
 </html>

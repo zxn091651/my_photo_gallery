@@ -74,27 +74,34 @@ function formatBytes(value) {
   return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+function setConnectionStatus(isHealthy, detail = '') {
+  elements.statusText.className = `connection-status ${isHealthy ? 'is-good' : 'is-bad'}`;
+  elements.statusText.title = detail;
+  elements.statusText.setAttribute('aria-label', `后端连接状态：${isHealthy ? '正常' : '异常'}`);
+  elements.statusText.replaceChildren();
+
+  const dot = document.createElement('span');
+  dot.className = 'status-dot';
+  dot.setAttribute('aria-hidden', 'true');
+
+  const label = document.createElement('span');
+  label.textContent = '后端连接状态';
+
+  elements.statusText.append(dot, label);
+}
+
 function setStatus(status) {
   if (!status) {
-    elements.statusText.textContent = '无法读取后端状态。请确认电脑、后端和内网穿透隧道正在运行。';
-    elements.statusText.className = 'error';
-    return;
-  }
-
-  elements.statusText.className = '';
-
-  if (!status.drivePresent) {
-    elements.statusText.textContent = `${status.driveLetter}: 盘未检测到。请插入移动硬盘 ${status.expectedVolume}。`;
-    return;
-  }
-
-  if (!status.mediaRootPresent) {
-    elements.statusText.textContent = `已检测到 ${status.driveLetter}: 盘，但没有找到 ${status.mediaRoot}。`;
+    setConnectionStatus(false, '无法读取后端状态。');
     return;
   }
 
   const volume = status.volumeName ? `，卷标 ${status.volumeName}` : '';
-  elements.statusText.textContent = `影像备份已连接${volume}。`;
+  const isHealthy = Boolean(status.drivePresent && status.mediaRootPresent && status.volumeMatches);
+  const detail = isHealthy
+    ? `正常工作：${status.driveLetter}: 盘已连接${volume}。`
+    : `异常：电脑在线，但硬盘或影像备份目录未就绪。`;
+  setConnectionStatus(isHealthy, detail);
 }
 
 function folderTitle(folderPath) {
@@ -337,7 +344,7 @@ function renderMediaDeck() {
 async function openFolder(folderPath = '') {
   state.currentFolder = folderPath;
   elements.currentFolder.textContent = folderTitle(folderPath);
-  elements.statusText.textContent = '正在加载影像备份...';
+  setConnectionStatus(false, '正在连接后端并读取影像备份。');
   elements.mediaCount.textContent = '正在读取文件夹...';
   elements.rootButton.hidden = !folderPath;
 
@@ -356,10 +363,10 @@ async function openFolder(folderPath = '') {
         : '没有可显示的照片或视频';
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
-    elements.statusText.textContent = message === 'Failed to fetch'
+    const detail = message === 'Failed to fetch'
       ? '无法连接后端，或当前目录加载超时。请确认电脑、后端和内网穿透隧道都已运行。'
       : message || '加载失败。';
-    elements.statusText.className = 'error';
+    setConnectionStatus(false, detail);
     state.folders = [];
     state.mediaFiles = [];
     renderFolderGallery([]);
