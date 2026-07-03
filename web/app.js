@@ -434,6 +434,33 @@ function removePreviousPeek(card) {
   setTimeout(() => card.remove(), 170);
 }
 
+function ensurePreviousPeek(card) {
+  if (!state.drag || state.drag.previousCard || state.mediaFiles.length <= 1 || !card.parentElement) {
+    return state.drag?.previousCard || null;
+  }
+
+  const previousIndex = wrappedMediaIndex(state.activeMediaIndex - 1);
+  const previousCard = createDeckCard(state.mediaFiles[previousIndex], previousIndex, {
+    extraClass: 'previous-peek',
+    isPriority: true,
+    zIndex: 12
+  });
+  setPreviousPeekPosition(previousCard, 0);
+  card.parentElement.append(previousCard);
+  state.drag.previousCard = previousCard;
+  state.drag.previousIndex = previousIndex;
+  card.style.zIndex = '11';
+  return previousCard;
+}
+
+function resetActiveCard(card) {
+  card.style.transform = '';
+  card.style.opacity = '';
+  card.style.zIndex = '';
+  card.style.removeProperty('--swipe-progress');
+  delete card.dataset.swipeLabel;
+}
+
 function attachSwipeHandlers(card) {
   card.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return;
@@ -445,20 +472,6 @@ function attachSwipeHandlers(card) {
     };
     card.classList.add('dragging');
     card.setPointerCapture(event.pointerId);
-
-    if (state.mediaFiles.length > 1 && card.parentElement) {
-      const previousIndex = wrappedMediaIndex(state.activeMediaIndex - 1);
-      const previousCard = createDeckCard(state.mediaFiles[previousIndex], previousIndex, {
-        extraClass: 'previous-peek',
-        isPriority: true,
-        zIndex: 12
-      });
-      setPreviousPeekPosition(previousCard, 0);
-      card.parentElement.append(previousCard);
-      state.drag.previousCard = previousCard;
-      state.drag.previousIndex = previousIndex;
-      card.style.zIndex = '11';
-    }
   });
 
   card.addEventListener('pointermove', (event) => {
@@ -473,8 +486,13 @@ function attachSwipeHandlers(card) {
       card.style.transform = '';
     }
     card.style.setProperty('--swipe-progress', String(Math.min(Math.abs(deltaX) / 160, 1)));
-    if (state.drag.previousCard) {
-      setPreviousPeekPosition(state.drag.previousCard, Math.max(deltaX, 0));
+    if (deltaX > 0) {
+      setPreviousPeekPosition(ensurePreviousPeek(card), deltaX);
+    } else if (state.drag.previousCard) {
+      removePreviousPeek(state.drag.previousCard);
+      state.drag.previousCard = null;
+      state.drag.previousIndex = undefined;
+      card.style.zIndex = '';
     }
     card.dataset.swipeLabel = deltaX < 0 ? '下一张' : '上一张';
   });
@@ -501,19 +519,11 @@ function attachSwipeHandlers(card) {
 
       if (previousIndex === undefined) {
         removePreviousPeek(previousCard);
-        card.style.transform = '';
-        card.style.opacity = '';
-        card.style.zIndex = '';
-        card.style.removeProperty('--swipe-progress');
-        delete card.dataset.swipeLabel;
+        resetActiveCard(card);
         return;
       }
 
-      card.style.transform = '';
-      card.style.opacity = '';
-      card.style.zIndex = '';
-      card.style.removeProperty('--swipe-progress');
-      delete card.dataset.swipeLabel;
+      resetActiveCard(card);
       setPreviousPeekPosition(previousCard, window.innerWidth, true);
       setTimeout(() => {
         if (previousCard) previousCard.remove();
@@ -524,11 +534,7 @@ function attachSwipeHandlers(card) {
     }
 
     removePreviousPeek(previousCard);
-    card.style.transform = '';
-    card.style.opacity = '';
-    card.style.zIndex = '';
-    card.style.removeProperty('--swipe-progress');
-    delete card.dataset.swipeLabel;
+    resetActiveCard(card);
     if (!moved) {
       openViewer(currentMediaFile());
     }
@@ -542,11 +548,7 @@ function attachSwipeHandlers(card) {
       card.releasePointerCapture(event.pointerId);
     } catch {}
     removePreviousPeek(previousCard);
-    card.style.transform = '';
-    card.style.opacity = '';
-    card.style.zIndex = '';
-    card.style.removeProperty('--swipe-progress');
-    delete card.dataset.swipeLabel;
+    resetActiveCard(card);
   });
 }
 
