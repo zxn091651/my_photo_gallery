@@ -343,7 +343,8 @@ async function serveStatic(request, response, requestUrl) {
     const extension = path.extname(finalTarget).toLowerCase();
     response.writeHead(200, {
       'Content-Type': MIME_TYPES.get(extension) || 'application/octet-stream',
-      'Content-Length': targetStat.size
+      'Content-Length': targetStat.size,
+      'Cache-Control': 'no-store'
     });
 
     if (request.method === 'HEAD') {
@@ -357,7 +358,8 @@ async function serveStatic(request, response, requestUrl) {
     const fallbackStat = await stat(fallback);
     response.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
-      'Content-Length': fallbackStat.size
+      'Content-Length': fallbackStat.size,
+      'Cache-Control': 'no-store'
     });
     createReadStream(fallback).pipe(response);
   }

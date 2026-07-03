@@ -84,9 +84,7 @@ function formatBytes(value) {
 
 function setStatus(status) {
   if (!status) {
-    elements.statusText.textContent = isHostedFrontend
-      ? '请填写公网后端地址，并确认电脑、图库后端和内网穿透隧道都已运行。'
-      : '无法连接后端。请确认电脑已开机，并已运行 npm run start。';
+    elements.statusText.textContent = '无法读取后端状态。请确认当前页面地址是 http://photo.fucku.top，且后端和内网穿透隧道正在运行。';
     elements.statusText.className = 'error';
     return;
   }
