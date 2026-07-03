@@ -466,8 +466,12 @@ function attachSwipeHandlers(card) {
     const deltaX = event.clientX - state.drag.startX;
     const deltaY = event.clientY - state.drag.startY;
     state.drag.moved = state.drag.moved || Math.abs(deltaX) > 6 || Math.abs(deltaY) > 6;
-    const rotation = deltaX / 18;
-    card.style.transform = `translate(${deltaX}px, ${deltaY}px) rotate(${rotation}deg)`;
+    if (deltaX < 0) {
+      const rotation = deltaX / 18;
+      card.style.transform = `translate(${deltaX}px, ${deltaY}px) rotate(${rotation}deg)`;
+    } else {
+      card.style.transform = '';
+    }
     card.style.setProperty('--swipe-progress', String(Math.min(Math.abs(deltaX) / 160, 1)));
     if (state.drag.previousCard) {
       setPreviousPeekPosition(state.drag.previousCard, Math.max(deltaX, 0));
@@ -483,6 +487,9 @@ function attachSwipeHandlers(card) {
     const previousIndex = state.drag.previousIndex;
     state.drag = null;
     card.classList.remove('dragging');
+    try {
+      card.releasePointerCapture(event.pointerId);
+    } catch {}
 
     if (Math.abs(deltaX) > 96) {
       if (deltaX < 0) {
@@ -502,8 +509,11 @@ function attachSwipeHandlers(card) {
         return;
       }
 
-      card.style.transform = `translate(${window.innerWidth * 0.28}px, 18px) scale(0.94) rotate(8deg)`;
-      card.style.opacity = '0.32';
+      card.style.transform = '';
+      card.style.opacity = '';
+      card.style.zIndex = '';
+      card.style.removeProperty('--swipe-progress');
+      delete card.dataset.swipeLabel;
       setPreviousPeekPosition(previousCard, window.innerWidth, true);
       setTimeout(() => {
         if (previousCard) previousCard.remove();
@@ -524,10 +534,13 @@ function attachSwipeHandlers(card) {
     }
   });
 
-  card.addEventListener('pointercancel', () => {
+  card.addEventListener('pointercancel', (event) => {
     const previousCard = state.drag?.previousCard;
     state.drag = null;
     card.classList.remove('dragging');
+    try {
+      card.releasePointerCapture(event.pointerId);
+    } catch {}
     removePreviousPeek(previousCard);
     card.style.transform = '';
     card.style.opacity = '';
