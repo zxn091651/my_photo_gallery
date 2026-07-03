@@ -166,7 +166,7 @@ function navigateMedia(direction) {
 }
 
 function createMediaElement(file, isTopCard) {
-  const source = apiUrl(file.viewUrl).toString();
+  const source = apiUrl(file.thumbUrl || file.viewUrl).toString();
 
   if (file.type === 'image') {
     const image = document.createElement('img');
@@ -174,6 +174,7 @@ function createMediaElement(file, isTopCard) {
     image.loading = isTopCard ? 'eager' : 'lazy';
     image.alt = file.name;
     image.src = source;
+    image.decoding = 'async';
     return image;
   }
 
@@ -206,6 +207,7 @@ function attachSwipeHandlers(card) {
     const rotation = deltaX / 18;
     card.style.transform = `translate(${deltaX}px, ${deltaY}px) rotate(${rotation}deg)`;
     card.style.setProperty('--swipe-progress', String(Math.min(Math.abs(deltaX) / 160, 1)));
+    card.dataset.swipeLabel = deltaX < 0 ? '下一张' : '上一张';
   });
 
   card.addEventListener('pointerup', (event) => {
@@ -218,12 +220,13 @@ function attachSwipeHandlers(card) {
     if (Math.abs(deltaX) > 96) {
       const exitX = deltaX > 0 ? window.innerWidth : -window.innerWidth;
       card.style.transform = `translate(${exitX}px, 24px) rotate(${deltaX > 0 ? 18 : -18}deg)`;
-      setTimeout(() => navigateMedia(deltaX > 0 ? 1 : -1), 180);
+      setTimeout(() => navigateMedia(deltaX < 0 ? 1 : -1), 180);
       return;
     }
 
     card.style.transform = '';
     card.style.removeProperty('--swipe-progress');
+    delete card.dataset.swipeLabel;
     if (!moved) {
       openViewer(currentMediaFile());
     }
@@ -234,7 +237,18 @@ function attachSwipeHandlers(card) {
     card.classList.remove('dragging');
     card.style.transform = '';
     card.style.removeProperty('--swipe-progress');
+    delete card.dataset.swipeLabel;
   });
+}
+
+function preloadUpcomingThumbnails() {
+  const upcomingFiles = state.mediaFiles.slice(state.activeMediaIndex + 1, state.activeMediaIndex + 3);
+  for (const file of upcomingFiles) {
+    if (file.type !== 'image' || !file.thumbUrl) continue;
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = apiUrl(file.thumbUrl).toString();
+  }
 }
 
 function renderMediaDeck() {
@@ -324,6 +338,7 @@ function renderMediaDeck() {
   controls.append(previousButton, openButton, downloadLink, nextButton);
   deckShell.append(deck, controls);
   elements.mediaGrid.append(deckShell);
+  preloadUpcomingThumbnails();
 }
 
 async function openFolder(folderPath = '') {

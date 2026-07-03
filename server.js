@@ -1,9 +1,11 @@
 import { createServer } from 'node:http';
-import { stat, readdir, realpath, access } from 'node:fs/promises';
+import { stat, readdir, realpath, access, mkdir } from 'node:fs/promises';
 import { constants, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -13,6 +15,7 @@ const MEDIA_ROOT = path.resolve(process.env.GALLERY_ROOT || 'F:\\影像备份');
 const DRIVE_LETTER = process.env.GALLERY_DRIVE || path.parse(MEDIA_ROOT).root.replace(/[:\\\/]/g, '') || 'F';
 const EXPECTED_VOLUME = process.env.GALLERY_VOLUME || 'WD_BLACK';
 const WEB_ROOT = path.join(__dirname, 'web');
+const THUMB_CACHE_ROOT = path.join(__dirname, '.cache', 'thumbs');
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg',
@@ -245,6 +248,7 @@ async function listMedia(folderPath) {
       size: fileStat.size,
       modifiedAt: fileStat.mtime.toISOString(),
       viewUrl: `/api/file?path=${encodeURIComponent(relativePath)}`,
+      thumbUrl: type === 'image' ? `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=960` : undefined,
       downloadUrl: `/api/download?path=${encodeURIComponent(relativePath)}`
     });
   }
@@ -253,6 +257,72 @@ async function listMedia(folderPath) {
   files.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
 
   return { folders, files };
+}
+
+function thumbnailWidth(value) {
+  const width = Number(value || 960);
+  if (!Number.isFinite(width)) return 960;
+  return Math.min(Math.max(Math.round(width), 240), 1600);
+}
+
+function thumbnailCachePath(relativePath, fileStat, width) {
+  const key = JSON.stringify({
+    relativePath,
+    size: fileStat.size,
+    mtimeMs: Math.round(fileStat.mtimeMs),
+    width
+  });
+  const hash = createHash('sha256').update(key).digest('hex');
+  return path.join(THUMB_CACHE_ROOT, `${hash}.webp`);
+}
+
+async function streamThumbnail(request, response, relativePath, widthValue) {
+  const filePath = await resolveInsideMediaRoot(relativePath);
+  const fileStat = await stat(filePath);
+
+  if (!fileStat.isFile() || isMediaFile(path.basename(filePath)) !== 'image') {
+    sendError(response, 404, 'Image not found.');
+    return;
+  }
+
+  const width = thumbnailWidth(widthValue);
+  const cachePath = thumbnailCachePath(relativePath, fileStat, width);
+
+  try {
+    await access(cachePath, constants.F_OK);
+  } catch {
+    await mkdir(THUMB_CACHE_ROOT, { recursive: true });
+    try {
+      await sharp(filePath, { failOn: 'none', pages: 1 })
+        .rotate()
+        .resize({
+          width,
+          height: Math.round(width * 1.45),
+          fit: 'inside',
+          withoutEnlargement: true
+        })
+        .webp({ quality: 62, effort: 4 })
+        .toFile(cachePath);
+    } catch {
+      await streamFile(request, response, relativePath, false);
+      return;
+    }
+  }
+
+  const cacheStat = await stat(cachePath);
+  writeCors(response);
+  response.writeHead(200, {
+    'Content-Type': 'image/webp',
+    'Content-Length': cacheStat.size,
+    'Cache-Control': 'private, max-age=604800, immutable'
+  });
+
+  if (request.method === 'HEAD') {
+    response.end();
+    return;
+  }
+
+  createReadStream(cachePath).pipe(response);
 }
 
 async function streamFile(request, response, relativePath, asDownload) {
@@ -403,6 +473,16 @@ async function handleApi(request, response, requestUrl) {
         return;
       }
       sendJson(response, 200, { ok: true, folder, status, ...(await listMedia(folder)) });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/thumbnail') {
+      const filePath = requestUrl.searchParams.get('path');
+      if (!filePath) {
+        sendError(response, 400, 'Missing file path.');
+        return;
+      }
+      await streamThumbnail(request, response, filePath, requestUrl.searchParams.get('w'));
       return;
     }
 

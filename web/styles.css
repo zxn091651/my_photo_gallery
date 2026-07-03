@@ -293,10 +293,10 @@ h2 {
   cursor: grab;
 }
 
-.deck-card.active::before,
 .deck-card.active::after {
   position: absolute;
   top: 22px;
+  left: 50%;
   z-index: 3;
   padding: 8px 12px;
   border-radius: 999px;
@@ -304,18 +304,12 @@ h2 {
   font-size: 13px;
   font-weight: 800;
   opacity: var(--swipe-progress);
+  transform: translateX(-50%);
   pointer-events: none;
 }
 
-.deck-card.active::before {
-  content: "上一张";
-  left: 20px;
-  background: var(--gold);
-}
-
 .deck-card.active::after {
-  content: "下一张";
-  right: 20px;
+  content: attr(data-swipe-label);
   background: var(--coral);
 }
 
