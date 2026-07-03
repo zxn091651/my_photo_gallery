@@ -13,7 +13,7 @@ function isLocalBackendUrl(value) {
 const safeStoredApiBase = isHostedFrontend && isLocalBackendUrl(storedApiBase) ? '' : storedApiBase;
 const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 const isHttpsPage = window.location.protocol === 'https:';
-const FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 8 : 14;
+const FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 6 : 12;
 
 const state = {
   apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
@@ -24,6 +24,7 @@ const state = {
   isRandomMode: false,
   mediaFiles: [],
   activeMediaIndex: 0,
+  deckAnimation: null,
   drag: null
 };
 
@@ -262,8 +263,9 @@ function renderFolderPager(pageCount) {
   const pageButtons = document.createElement('div');
   pageButtons.className = 'page-buttons';
 
-  const startPage = Math.max(0, Math.min(state.folderPage - 2, pageCount - 5));
-  const endPage = Math.min(pageCount, startPage + 5);
+  const maxVisiblePages = window.matchMedia('(max-width: 520px)').matches ? 3 : 5;
+  const startPage = Math.max(0, Math.min(state.folderPage - Math.floor(maxVisiblePages / 2), pageCount - maxVisiblePages));
+  const endPage = Math.min(pageCount, startPage + maxVisiblePages);
   for (let pageIndex = startPage; pageIndex < endPage; pageIndex += 1) {
     pageButtons.append(createPageButton(pageIndex));
   }
@@ -335,6 +337,16 @@ function navigateMedia(direction) {
   setActiveMediaIndex(state.activeMediaIndex + direction);
 }
 
+function navigateToPreviousMedia() {
+  if (state.activeMediaIndex <= 0) {
+    renderMediaDeck();
+    return;
+  }
+
+  state.deckAnimation = 'previous';
+  setActiveMediaIndex(state.activeMediaIndex - 1);
+}
+
 function createMediaElement(file, isPriority) {
   const source = apiUrl(file.thumbUrl || file.viewUrl).toString();
 
@@ -389,9 +401,21 @@ function attachSwipeHandlers(card) {
     card.classList.remove('dragging');
 
     if (Math.abs(deltaX) > 96) {
-      const exitX = deltaX > 0 ? window.innerWidth : -window.innerWidth;
-      card.style.transform = `translate(${exitX}px, 24px) rotate(${deltaX > 0 ? 18 : -18}deg)`;
-      setTimeout(() => navigateMedia(deltaX < 0 ? 1 : -1), 180);
+      if (deltaX < 0) {
+        card.style.transform = `translate(${-window.innerWidth}px, 24px) rotate(-18deg)`;
+        setTimeout(() => navigateMedia(1), 180);
+        return;
+      }
+
+      if (state.activeMediaIndex <= 0) {
+        card.style.transform = '';
+        card.style.removeProperty('--swipe-progress');
+        delete card.dataset.swipeLabel;
+        return;
+      }
+
+      card.style.transform = `translate(${window.innerWidth}px, 24px) rotate(18deg)`;
+      setTimeout(navigateToPreviousMedia, 120);
       return;
     }
 
@@ -429,6 +453,8 @@ function preloadUpcomingThumbnails() {
 
 function renderMediaDeck() {
   elements.mediaGrid.replaceChildren();
+  const incomingFromPrevious = state.deckAnimation === 'previous';
+  state.deckAnimation = null;
 
   const deckShell = document.createElement('section');
   deckShell.className = 'deck-shell';
@@ -456,6 +482,17 @@ function renderMediaDeck() {
           event.preventDefault();
           openViewer(file);
         }
+      });
+    }
+
+    if (isTopCard && incomingFromPrevious) {
+      card.classList.add('returning');
+      card.style.transform = `translate(${window.innerWidth}px, 24px) rotate(18deg)`;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          card.classList.remove('returning');
+          card.style.transform = '';
+        });
       });
     }
 

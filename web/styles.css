@@ -300,6 +300,7 @@ h2 {
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+  min-height: 42px;
   padding-bottom: max(0px, env(safe-area-inset-bottom));
 }
 
@@ -309,14 +310,22 @@ h2 {
   justify-content: center;
   gap: 8px;
   overflow: hidden;
+  flex-wrap: nowrap;
 }
 
 .page-button,
 .page-arrow {
+  flex: 0 0 auto;
   min-height: 38px;
   padding: 0 13px;
   font-size: 13px;
   font-weight: 800;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.page-button {
+  min-width: 72px;
 }
 
 .page-arrow {
@@ -462,6 +471,10 @@ h2 {
 .deck-card.dragging {
   cursor: grabbing;
   transition: none;
+}
+
+.deck-card.returning {
+  pointer-events: none;
 }
 
 .deck-preview {
