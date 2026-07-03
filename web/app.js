@@ -246,8 +246,16 @@ async function refreshAll() {
   try {
     await loadFolders();
     await openFolder(state.currentFolder);
-  } catch {
-    setStatus(null);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message) {
+      elements.statusText.textContent = message === 'Failed to fetch'
+        ? '无法连接后端。请确认电脑已开机，后端或 Cloudflare Tunnel 已运行。'
+        : message;
+      elements.statusText.className = 'error';
+    } else {
+      setStatus(null);
+    }
     state.folders = [];
     renderFolders();
     renderChildFolders([]);

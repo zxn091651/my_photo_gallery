@@ -36,4 +36,22 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 "[$stamp] Starting gallery backend in $ProjectRoot" | Add-Content -LiteralPath (Join-Path $logDir 'gallery-startup.log') -Encoding UTF8
 
-& node server.js 2>&1 | Tee-Object -FilePath (Join-Path $logDir 'gallery-server.log') -Append
+$existingListener = netstat -ano | Select-String ":$env:PORT" | Select-String 'LISTENING'
+if ($existingListener) {
+  "[$stamp] Port $env:PORT already has a listener. Skipping startup." | Add-Content -LiteralPath (Join-Path $logDir 'gallery-startup.log') -Encoding UTF8
+  exit 0
+}
+
+$stdoutLog = Join-Path $logDir 'gallery-server.log'
+$stderrLog = Join-Path $logDir 'gallery-server-error.log'
+
+$process = Start-Process `
+  -FilePath 'node' `
+  -ArgumentList 'server.js' `
+  -WorkingDirectory $ProjectRoot `
+  -WindowStyle Hidden `
+  -RedirectStandardOutput $stdoutLog `
+  -RedirectStandardError $stderrLog `
+  -PassThru
+
+"[$stamp] Started node process $($process.Id)." | Add-Content -LiteralPath (Join-Path $logDir 'gallery-startup.log') -Encoding UTF8
