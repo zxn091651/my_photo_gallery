@@ -13,11 +13,13 @@ function isLocalBackendUrl(value) {
 const safeStoredApiBase = isHostedFrontend && isLocalBackendUrl(storedApiBase) ? '' : storedApiBase;
 const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 const isHttpsPage = window.location.protocol === 'https:';
+const FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 8 : 14;
 
 const state = {
   apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
   folders: [],
   uploadFolders: [],
+  folderPage: 0,
   currentFolder: '',
   isRandomMode: false,
   mediaFiles: [],
@@ -213,27 +215,98 @@ function createUploadButton() {
   return button;
 }
 
+function pageLabel(pageIndex) {
+  const labels = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+  return `第${labels[pageIndex] || pageIndex + 1}页`;
+}
+
+function setFolderPage(pageIndex) {
+  const pageCount = Math.max(1, Math.ceil(state.folders.length / FOLDER_PAGE_SIZE));
+  state.folderPage = Math.min(Math.max(pageIndex, 0), pageCount - 1);
+  renderFolderGallery(state.folders);
+}
+
+function createPageButton(pageIndex) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'page-button';
+  button.textContent = pageLabel(pageIndex);
+  button.disabled = pageIndex === state.folderPage;
+  button.addEventListener('click', () => setFolderPage(pageIndex));
+  return button;
+}
+
+function renderFolderPager(pageCount) {
+  if (pageCount <= 1) return null;
+
+  const pager = document.createElement('nav');
+  pager.className = 'folder-pager';
+  pager.setAttribute('aria-label', '文件夹分页');
+
+  const previousButton = document.createElement('button');
+  previousButton.type = 'button';
+  previousButton.className = 'page-arrow';
+  previousButton.textContent = '‹';
+  previousButton.title = '上一页';
+  previousButton.disabled = state.folderPage <= 0;
+  previousButton.addEventListener('click', () => setFolderPage(state.folderPage - 1));
+
+  const nextButton = document.createElement('button');
+  nextButton.type = 'button';
+  nextButton.className = 'page-arrow';
+  nextButton.textContent = '›';
+  nextButton.title = '下一页';
+  nextButton.disabled = state.folderPage >= pageCount - 1;
+  nextButton.addEventListener('click', () => setFolderPage(state.folderPage + 1));
+
+  const pageButtons = document.createElement('div');
+  pageButtons.className = 'page-buttons';
+
+  const startPage = Math.max(0, Math.min(state.folderPage - 2, pageCount - 5));
+  const endPage = Math.min(pageCount, startPage + 5);
+  for (let pageIndex = startPage; pageIndex < endPage; pageIndex += 1) {
+    pageButtons.append(createPageButton(pageIndex));
+  }
+
+  pager.append(previousButton, pageButtons, nextButton);
+  return pager;
+}
+
 function renderFolderGallery(folders) {
   elements.mediaGrid.replaceChildren();
+
+  const folderList = folders || [];
+  const pageCount = Math.max(1, Math.ceil(folderList.length / FOLDER_PAGE_SIZE));
+  state.folderPage = Math.min(state.folderPage, pageCount - 1);
+  const pageStart = state.folderPage * FOLDER_PAGE_SIZE;
+  const visibleFolders = folderList.slice(pageStart, pageStart + FOLDER_PAGE_SIZE);
+
+  const shell = document.createElement('section');
+  shell.className = 'folder-page-shell';
+
+  const actions = document.createElement('div');
+  actions.className = 'folder-actions';
+  actions.append(createRandomButton(), createUploadButton());
 
   const gallery = document.createElement('section');
   gallery.className = 'folder-gallery';
   gallery.setAttribute('aria-label', '文件夹');
-  gallery.append(createRandomButton());
-  gallery.append(createUploadButton());
-
-  for (const folder of folders) {
+  for (const folder of visibleFolders) {
     gallery.append(createFolderButton(folder));
   }
 
-  elements.mediaGrid.append(gallery);
+  shell.append(actions, gallery);
 
-  if (!folders.length) {
+  if (!folderList.length) {
     const empty = document.createElement('p');
     empty.className = 'empty';
     empty.textContent = '这里暂时没有可显示的照片、视频或文件夹。';
-    elements.mediaGrid.append(empty);
+    shell.append(empty);
   }
+
+  const pager = renderFolderPager(pageCount);
+  if (pager) shell.append(pager);
+  elements.mediaGrid.append(shell);
 }
 
 function renderMedia(files, folders) {
@@ -430,6 +503,7 @@ async function openFolder(folderPath = '') {
     const data = await requestJson('/api/media', { folder: folderPath });
     setStatus(data.status);
     state.folders = data.folders || [];
+    state.folderPage = 0;
     renderMedia(data.files || [], state.folders);
 
     const folderText = `${state.folders.length} 个文件夹`;
