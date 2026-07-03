@@ -1,0 +1,14 @@
+{
+  "name": "my-photo-gallery",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local media gateway plus a static gallery frontend for browsing a removable drive backup folder.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

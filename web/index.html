@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>影像备份图库</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar" aria-label="图库状态">
+        <div>
+          <h1>影像备份图库</h1>
+          <p id="statusText">正在连接本机后端...</p>
+        </div>
+        <div class="actions">
+          <input id="apiInput" type="url" aria-label="后端地址" spellcheck="false" />
+          <button id="saveApiButton" type="button">连接</button>
+          <button id="refreshButton" type="button">刷新</button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="sidebar" aria-label="文件夹列表">
+          <div class="sidebar-header">
+            <strong>文件夹</strong>
+            <span id="folderCount">0</span>
+          </div>
+          <div id="folderList" class="folder-list"></div>
+        </aside>
+
+        <section class="content" aria-label="媒体内容">
+          <div class="content-header">
+            <div>
+              <h2 id="currentFolder">请选择文件夹</h2>
+              <p id="mediaCount">等待加载照片和视频</p>
+            </div>
+            <button id="rootButton" type="button">根目录</button>
+          </div>
+          <div id="childFolderList" class="child-folders"></div>
+          <div id="mediaGrid" class="media-grid"></div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="viewerDialog" class="viewer">
+      <div class="viewer-toolbar">
+        <strong id="viewerTitle"></strong>
+        <div>
+          <a id="downloadLink" class="button-link" download>下载</a>
+          <button id="closeViewerButton" type="button">关闭</button>
+        </div>
+      </div>
+      <div id="viewerStage" class="viewer-stage"></div>
+    </dialog>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
