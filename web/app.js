@@ -14,6 +14,9 @@ const safeStoredApiBase = isHostedFrontend && isLocalBackendUrl(storedApiBase) ?
 const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 const isHttpsPage = window.location.protocol === 'https:';
 const FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 6 : 12;
+const TAP_SLOP = 2;
+const PREVIOUS_PEEK_SLOP = 14;
+const SWIPE_COMMIT_DISTANCE = 96;
 
 const state = {
   apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
@@ -486,7 +489,7 @@ function attachSwipeHandlers(card) {
       card.style.transform = '';
     }
     card.style.setProperty('--swipe-progress', String(Math.min(Math.abs(deltaX) / 160, 1)));
-    if (deltaX > 0) {
+    if (deltaX > PREVIOUS_PEEK_SLOP) {
       setPreviousPeekPosition(ensurePreviousPeek(card), deltaX);
     } else if (state.drag.previousCard) {
       removePreviousPeek(state.drag.previousCard);
@@ -500,7 +503,9 @@ function attachSwipeHandlers(card) {
   card.addEventListener('pointerup', (event) => {
     if (!state.drag) return;
     const deltaX = event.clientX - state.drag.startX;
+    const deltaY = event.clientY - state.drag.startY;
     const moved = state.drag.moved;
+    const tapped = Math.abs(deltaX) <= TAP_SLOP && Math.abs(deltaY) <= TAP_SLOP;
     const previousCard = state.drag.previousCard;
     const previousIndex = state.drag.previousIndex;
     state.drag = null;
@@ -509,7 +514,7 @@ function attachSwipeHandlers(card) {
       card.releasePointerCapture(event.pointerId);
     } catch {}
 
-    if (Math.abs(deltaX) > 96) {
+    if (Math.abs(deltaX) > SWIPE_COMMIT_DISTANCE) {
       if (deltaX < 0) {
         removePreviousPeek(previousCard);
         card.style.transform = `translate(${-window.innerWidth}px, 24px) rotate(-18deg)`;
@@ -535,7 +540,7 @@ function attachSwipeHandlers(card) {
 
     removePreviousPeek(previousCard);
     resetActiveCard(card);
-    if (!moved) {
+    if (!moved && tapped) {
       openViewer(currentMediaFile());
     }
   });
