@@ -18,6 +18,7 @@ const state = {
   apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
   folders: [],
   currentFolder: '',
+  isRandomMode: false,
   mediaFiles: [],
   activeMediaIndex: 0,
   drag: null
@@ -125,6 +126,23 @@ function createFolderButton(folder) {
   return button;
 }
 
+function createRandomButton() {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'folder-card random-card';
+  button.title = '随机探索所有子文件夹的照片';
+
+  const name = document.createElement('strong');
+  name.textContent = '随机探索';
+
+  const meta = document.createElement('span');
+  meta.textContent = '随机照片';
+
+  button.append(name, meta);
+  button.addEventListener('click', openRandomMode);
+  return button;
+}
+
 function renderFolderGallery(folders) {
   elements.mediaGrid.replaceChildren();
 
@@ -139,6 +157,7 @@ function renderFolderGallery(folders) {
   const gallery = document.createElement('section');
   gallery.className = 'folder-gallery';
   gallery.setAttribute('aria-label', '文件夹');
+  gallery.append(createRandomButton());
 
   for (const folder of folders) {
     gallery.append(createFolderButton(folder));
@@ -343,6 +362,7 @@ function renderMediaDeck() {
 
 async function openFolder(folderPath = '') {
   state.currentFolder = folderPath;
+  state.isRandomMode = false;
   elements.currentFolder.textContent = folderTitle(folderPath);
   setConnectionStatus(false, '正在连接后端并读取影像备份。');
   elements.mediaCount.textContent = '正在读取文件夹...';
@@ -372,6 +392,35 @@ async function openFolder(folderPath = '') {
     renderFolderGallery([]);
     elements.currentFolder.textContent = '无法连接';
     elements.mediaCount.textContent = '请检查后端和隧道。';
+  }
+}
+
+async function openRandomMode() {
+  state.currentFolder = '';
+  state.isRandomMode = true;
+  elements.currentFolder.textContent = '随机探索';
+  setConnectionStatus(false, '正在随机扫描所有子文件夹的照片。');
+  elements.mediaCount.textContent = '正在随机抽取照片...';
+  elements.rootButton.hidden = false;
+
+  try {
+    const data = await requestJson('/api/random', { limit: 96 });
+    setStatus(data.status);
+    state.folders = [];
+    renderMedia(data.files || [], []);
+    elements.mediaCount.textContent = data.files?.length
+      ? `已随机抽取 ${data.files.length} 张照片`
+      : '没有找到可随机探索的照片';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const detail = message === 'Failed to fetch'
+      ? '随机探索加载失败。请确认后端和内网穿透隧道都已运行。'
+      : message || '随机探索加载失败。';
+    setConnectionStatus(false, detail);
+    state.mediaFiles = [];
+    renderFolderGallery(state.folders);
+    elements.currentFolder.textContent = '随机探索失败';
+    elements.mediaCount.textContent = '请稍后再试。';
   }
 }
 

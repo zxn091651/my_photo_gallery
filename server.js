@@ -135,6 +135,19 @@ function isMediaFile(fileName) {
   return null;
 }
 
+function mediaDescriptor(entryName, relativePath, type, fileStat) {
+  return {
+    name: entryName,
+    path: relativePath,
+    type,
+    size: fileStat.size,
+    modifiedAt: fileStat.mtime.toISOString(),
+    viewUrl: `/api/file?path=${encodeURIComponent(relativePath)}`,
+    thumbUrl: type === 'image' ? `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=960` : undefined,
+    downloadUrl: `/api/download?path=${encodeURIComponent(relativePath)}`
+  };
+}
+
 async function pathExists(filePath) {
   try {
     await access(filePath, constants.F_OK);
@@ -241,22 +254,78 @@ async function listMedia(folderPath) {
     if (!type) continue;
 
     const fileStat = await stat(absolutePath);
-    files.push({
-      name: entry.name,
-      path: relativePath,
-      type,
-      size: fileStat.size,
-      modifiedAt: fileStat.mtime.toISOString(),
-      viewUrl: `/api/file?path=${encodeURIComponent(relativePath)}`,
-      thumbUrl: type === 'image' ? `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=960` : undefined,
-      downloadUrl: `/api/download?path=${encodeURIComponent(relativePath)}`
-    });
+    files.push(mediaDescriptor(entry.name, relativePath, type, fileStat));
   }
 
   folders.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
   files.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
 
   return { folders, files };
+}
+
+function randomLimit(value) {
+  const limit = Number(value || 80);
+  if (!Number.isFinite(limit)) return 80;
+  return Math.min(Math.max(Math.round(limit), 12), 240);
+}
+
+async function randomPhotos(limitValue) {
+  const root = await getRootRealPath();
+  const limit = randomLimit(limitValue);
+  const sample = [];
+  let seen = 0;
+  const stack = [root];
+
+  while (stack.length) {
+    const current = stack.pop();
+    let entries = [];
+
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const absolutePath = path.join(current, entry.name);
+
+      if (entry.isDirectory()) {
+        stack.push(absolutePath);
+        continue;
+      }
+
+      if (!entry.isFile() || !IMAGE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        continue;
+      }
+
+      let fileStat;
+      try {
+        fileStat = await stat(absolutePath);
+      } catch {
+        continue;
+      }
+
+      const relativePath = toRelativeUrlPath(root, absolutePath);
+      const item = mediaDescriptor(entry.name, relativePath, 'image', fileStat);
+      seen += 1;
+
+      if (sample.length < limit) {
+        sample.push(item);
+      } else {
+        const replacementIndex = Math.floor(Math.random() * seen);
+        if (replacementIndex < limit) {
+          sample[replacementIndex] = item;
+        }
+      }
+    }
+  }
+
+  for (let index = sample.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [sample[index], sample[swapIndex]] = [sample[swapIndex], sample[index]];
+  }
+
+  return { files: sample, totalPhotos: seen };
 }
 
 function thumbnailWidth(value) {
@@ -473,6 +542,16 @@ async function handleApi(request, response, requestUrl) {
         return;
       }
       sendJson(response, 200, { ok: true, folder, status, ...(await listMedia(folder)) });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/random') {
+      const status = await getStatus();
+      if (!status.mediaRootPresent) {
+        sendJson(response, 200, { ok: true, mode: 'random', files: [], totalPhotos: 0, status });
+        return;
+      }
+      sendJson(response, 200, { ok: true, mode: 'random', status, ...(await randomPhotos(requestUrl.searchParams.get('limit'))) });
       return;
     }
 
