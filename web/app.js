@@ -394,6 +394,10 @@ function createMediaElement(file, isPriority) {
   return video;
 }
 
+function mediaTypeLabel(file) {
+  return file.type === 'image' ? '照片' : '视频';
+}
+
 function createDeckCard(file, absoluteIndex, options = {}) {
   const isTopCard = Boolean(options.isTopCard);
   const card = document.createElement('article');
@@ -413,6 +417,13 @@ function createDeckCard(file, absoluteIndex, options = {}) {
     <small>${formatBytes(file.size)}</small>
   `;
   label.querySelector('strong').textContent = file.name;
+  const typeLine = document.createElement('span');
+  typeLine.textContent = `${mediaTypeLabel(file)} · ${absoluteIndex + 1}/${state.mediaFiles.length}`;
+  const title = document.createElement('strong');
+  title.textContent = file.name;
+  const size = document.createElement('small');
+  size.textContent = formatBytes(file.size);
+  label.replaceChildren(typeLine, title, size);
 
   card.append(preview, label);
   return card;
@@ -567,10 +578,15 @@ function attachSwipeHandlers(card) {
 }
 
 function preloadUpcomingThumbnails() {
-  const preloadFiles = [
-    ...state.mediaFiles.slice(Math.max(0, state.activeMediaIndex - 1), state.activeMediaIndex),
-    ...state.mediaFiles.slice(state.activeMediaIndex + 1, state.activeMediaIndex + 4)
-  ];
+  const preloadFiles = [];
+  const seenIndexes = new Set();
+
+  for (let offset = -4; offset <= 4; offset += 1) {
+    const index = wrappedMediaIndex(state.activeMediaIndex + offset);
+    if (seenIndexes.has(index)) continue;
+    seenIndexes.add(index);
+    preloadFiles.push(state.mediaFiles[index]);
+  }
 
   for (const file of preloadFiles) {
     if (file.type !== 'image' || !file.thumbUrl) continue;
