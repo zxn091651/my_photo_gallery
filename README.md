@@ -39,37 +39,28 @@ $env:GALLERY_ROOT="F:\影像备份"; npm run start
 
 ## 让别人直接访问
 
-GitHub Pages 不能把你的移动硬盘变成公网服务。要让别人直接访问，需要给本机后端一个公网 HTTPS 地址，常见做法是使用 Cloudflare Tunnel、ngrok、frp 或自有服务器反向代理。
-
-推荐至少设置访问令牌：
-
-```powershell
-$env:GALLERY_TOKEN="换成一个足够长的随机密码"; npm run start
-```
+GitHub Pages 不能把你的移动硬盘变成公网服务。要让别人直接访问，需要给本机后端一个公网 HTTPS 地址，常见做法是 ChmlFrp、Cloudflare Tunnel、ngrok、frp 或自有服务器反向代理。
 
 拿到公网后端地址后，有两种接入方式：
 
 1. 临时分享链接：
 
 ```text
-https://zxn091651.github.io/my_photo_gallery/?api=https%3A%2F%2F你的公网后端地址&token=你的访问令牌
+https://zxn091651.github.io/my_photo_gallery/?api=https%3A%2F%2F你的公网后端地址
 ```
 
 2. 固定写入 `web/config.js`：
 
 ```js
 window.GALLERY_CONFIG = {
-  apiBase: "https://你的公网后端地址",
-  token: ""
+  apiBase: "https://你的公网后端地址"
 };
 ```
-
-如果把 token 写进 `web/config.js`，任何能打开网页源码的人都能看到它；更建议只把 token 通过私下链接发给可信的人。
 
 部署在 GitHub Pages 上的前端不会再默认连接 `http://127.0.0.1:8787`。给别人访问时，前端必须使用内网穿透的公网 HTTPS 地址，例如：
 
 ```text
-https://zxn091651.github.io/my_photo_gallery/?api=https%3A%2F%2Fphotos.example.com&token=你的访问令牌
+https://zxn091651.github.io/my_photo_gallery/?api=https%3A%2F%2Fphotos.example.com
 ```
 
 访问链路是：
@@ -88,7 +79,7 @@ npm run startup:install
 
 这个命令会：
 
-- 创建本地 `.env` 配置文件，默认包含一个随机 `GALLERY_TOKEN`。
+- 创建本地 `.env` 配置文件。
 - 注册 Windows 任务计划程序任务 `MyPhotoGalleryBackend`。
 - 在当前用户登录 Windows 时自动运行 `scripts/start-gallery.ps1`。
 - 立即启动一次图库后端。

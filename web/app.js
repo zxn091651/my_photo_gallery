@@ -1,6 +1,5 @@
 const CONFIG = window.GALLERY_CONFIG || {};
 const API_STORAGE_KEY = 'photo-gallery-api-base';
-const TOKEN_STORAGE_KEY = 'photo-gallery-token';
 const queryParams = new URLSearchParams(window.location.search);
 const isHostedFrontend = window.location.hostname.endsWith('github.io');
 const configuredApiBase = String(CONFIG.apiBase || '').trim().replace(/\/+$/, '');
@@ -16,7 +15,6 @@ const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 
 const state = {
   apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
-  token: queryParams.get('token') || localStorage.getItem(TOKEN_STORAGE_KEY) || CONFIG.token || '',
   folders: [],
   currentFolder: ''
 };
@@ -24,7 +22,6 @@ const state = {
 const elements = {
   statusText: document.querySelector('#statusText'),
   apiInput: document.querySelector('#apiInput'),
-  tokenInput: document.querySelector('#tokenInput'),
   saveApiButton: document.querySelector('#saveApiButton'),
   refreshButton: document.querySelector('#refreshButton'),
   rootButton: document.querySelector('#rootButton'),
@@ -45,7 +42,6 @@ elements.apiInput.value = state.apiBase;
 elements.apiInput.placeholder = isHostedFrontend
   ? 'https://你的公网后端地址'
   : window.location.origin;
-elements.tokenInput.value = state.token;
 
 function apiUrl(path, params = {}) {
   if (!state.apiBase) {
@@ -53,9 +49,6 @@ function apiUrl(path, params = {}) {
   }
 
   const url = new URL(path, state.apiBase);
-  if (state.token) {
-    url.searchParams.set('token', state.token);
-  }
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null) {
       url.searchParams.set(key, value);
@@ -65,12 +58,8 @@ function apiUrl(path, params = {}) {
 }
 
 async function requestJson(path, params) {
-  const headers = state.token ? { 'X-Gallery-Token': state.token } : {};
-  const response = await fetch(apiUrl(path, params), { headers });
+  const response = await fetch(apiUrl(path, params));
   if (!response.ok) {
-    if (response.status === 401) {
-      throw new Error('访问令牌不正确或缺失');
-    }
     throw new Error(`HTTP ${response.status}`);
   }
   return response.json();
@@ -285,13 +274,11 @@ async function refreshAll() {
 
 elements.saveApiButton.addEventListener('click', () => {
   state.apiBase = elements.apiInput.value.trim().replace(/\/+$/, '') || DEFAULT_API_BASE;
-  state.token = elements.tokenInput.value.trim();
   if (state.apiBase) {
     localStorage.setItem(API_STORAGE_KEY, state.apiBase);
   } else {
     localStorage.removeItem(API_STORAGE_KEY);
   }
-  localStorage.setItem(TOKEN_STORAGE_KEY, state.token);
   elements.apiInput.value = state.apiBase;
   refreshAll();
 });

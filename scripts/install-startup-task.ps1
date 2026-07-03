@@ -1,7 +1,6 @@
 param(
   [string]$TaskName = 'MyPhotoGalleryBackend',
-  [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
-  [switch]$NoToken
+  [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,25 +13,11 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 
 $envFile = Join-Path $ProjectRoot '.env'
 if (-not (Test-Path $envFile)) {
-  $tokenLine = ''
-  if (-not $NoToken) {
-    $bytes = [byte[]]::new(32)
-    $rng = [Security.Cryptography.RNGCryptoServiceProvider]::new()
-    try {
-      $rng.GetBytes($bytes)
-    } finally {
-      $rng.Dispose()
-    }
-    $token = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-    $tokenLine = "GALLERY_TOKEN=$token"
-  }
-
   @(
     'PORT=8787',
     'HOST=0.0.0.0',
     'GALLERY_DRIVE=F',
-    'GALLERY_VOLUME=WD_BLACK',
-    $tokenLine
+    'GALLERY_VOLUME=WD_BLACK'
   ) | Where-Object { $_ } | Set-Content -LiteralPath $envFile -Encoding UTF8
 }
 
@@ -66,11 +51,3 @@ Start-ScheduledTask -TaskName $TaskName
 Write-Host "Installed and started scheduled task: $TaskName"
 Write-Host "Project root: $ProjectRoot"
 Write-Host "Environment file: $envFile"
-if (Test-Path $envFile) {
-  $token = Select-String -LiteralPath $envFile -Pattern '^GALLERY_TOKEN=' -ErrorAction SilentlyContinue
-  if ($token) {
-    Write-Host 'GALLERY_TOKEN is enabled. Keep .env private.'
-  } else {
-    Write-Host 'GALLERY_TOKEN is disabled.'
-  }
-}
