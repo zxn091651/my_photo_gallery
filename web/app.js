@@ -12,6 +12,7 @@ function isLocalBackendUrl(value) {
 
 const safeStoredApiBase = isHostedFrontend && isLocalBackendUrl(storedApiBase) ? '' : storedApiBase;
 const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
+const isHttpsPage = window.location.protocol === 'https:';
 
 const state = {
   apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
@@ -45,7 +46,11 @@ elements.apiInput.placeholder = isHostedFrontend
 
 function apiUrl(path, params = {}) {
   if (!state.apiBase) {
-    throw new Error('请先填写 Cloudflare 公网后端地址。');
+    throw new Error('请先填写公网后端地址。');
+  }
+
+  if (isHttpsPage && state.apiBase.startsWith('http://')) {
+    throw new Error('当前页面是 HTTPS，不能连接 HTTP 后端。请直接打开 http://photo.fucku.top，或把隧道配置为 HTTPS。');
   }
 
   const url = new URL(path, state.apiBase);

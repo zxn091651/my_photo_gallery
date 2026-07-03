@@ -69,6 +69,14 @@ https://zxn091651.github.io/my_photo_gallery/?api=https%3A%2F%2Fphotos.example.c
 GitHub Pages 前端 -> 公网隧道地址 -> 你的电脑 -> http://localhost:8787 -> F:\影像备份
 ```
 
+如果内网穿透只提供 HTTP 地址，例如：
+
+```text
+http://photo.fucku.top
+```
+
+请直接打开这个地址使用图库。HTTPS 的 GitHub Pages 页面不能调用 HTTP 后端，浏览器会拦截。
+
 ## 开机自启动
 
 安装图库后端开机自启动：
