@@ -15,6 +15,7 @@
         </div>
         <div class="actions">
           <input id="apiInput" type="url" aria-label="后端地址" spellcheck="false" />
+          <input id="tokenInput" type="password" aria-label="访问令牌" placeholder="访问令牌" spellcheck="false" />
           <button id="saveApiButton" type="button">连接</button>
           <button id="refreshButton" type="button">刷新</button>
         </div>
@@ -54,6 +55,7 @@
       <div id="viewerStage" class="viewer-stage"></div>
     </dialog>
 
+    <script src="./config.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

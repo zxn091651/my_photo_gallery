@@ -13,6 +13,7 @@ const MEDIA_ROOT = path.resolve(process.env.GALLERY_ROOT || 'F:\\影像备份');
 const DRIVE_LETTER = process.env.GALLERY_DRIVE || path.parse(MEDIA_ROOT).root.replace(/[:\\\/]/g, '') || 'F';
 const EXPECTED_VOLUME = process.env.GALLERY_VOLUME || 'WD_BLACK';
 const WEB_ROOT = path.join(__dirname, 'web');
+const ACCESS_TOKEN = process.env.GALLERY_TOKEN || '';
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg',
@@ -77,7 +78,7 @@ function sendJson(response, statusCode, payload) {
     'Content-Length': Buffer.byteLength(body),
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Range',
+    'Access-Control-Allow-Headers': 'Content-Type, Range, X-Gallery-Token',
     'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range'
   });
   response.end(body);
@@ -90,8 +91,15 @@ function sendError(response, statusCode, message, details = undefined) {
 function writeCors(response) {
   response.setHeader('Access-Control-Allow-Origin', '*');
   response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, X-Gallery-Token');
   response.setHeader('Access-Control-Expose-Headers', 'Accept-Ranges, Content-Length, Content-Range');
+}
+
+function isAuthorized(request, requestUrl) {
+  if (!ACCESS_TOKEN) return true;
+  const queryToken = requestUrl.searchParams.get('token') || '';
+  const headerToken = request.headers['x-gallery-token'] || '';
+  return queryToken === ACCESS_TOKEN || headerToken === ACCESS_TOKEN;
 }
 
 function normalizeRelativePath(value = '') {
@@ -381,6 +389,11 @@ async function handleApi(request, response, requestUrl) {
     return;
   }
 
+  if (!isAuthorized(request, requestUrl)) {
+    sendError(response, 401, 'Unauthorized.');
+    return;
+  }
+
   try {
     if (requestUrl.pathname === '/api/status') {
       sendJson(response, 200, await getStatus());
@@ -434,6 +447,7 @@ const server = createServer(async (request, response) => {
 server.listen(PORT, HOST, () => {
   console.log(`Photo gallery backend: http://127.0.0.1:${PORT}`);
   console.log(`Media root: ${MEDIA_ROOT}`);
+  console.log(`Access token: ${ACCESS_TOKEN ? 'enabled' : 'disabled'}`);
 });
 
 process.on('SIGINT', () => {

@@ -1,8 +1,12 @@
-const DEFAULT_API_BASE = 'http://127.0.0.1:8787';
+const CONFIG = window.GALLERY_CONFIG || {};
+const DEFAULT_API_BASE = CONFIG.apiBase || 'http://127.0.0.1:8787';
 const API_STORAGE_KEY = 'photo-gallery-api-base';
+const TOKEN_STORAGE_KEY = 'photo-gallery-token';
+const queryParams = new URLSearchParams(window.location.search);
 
 const state = {
-  apiBase: localStorage.getItem(API_STORAGE_KEY) || DEFAULT_API_BASE,
+  apiBase: queryParams.get('api') || localStorage.getItem(API_STORAGE_KEY) || DEFAULT_API_BASE,
+  token: queryParams.get('token') || localStorage.getItem(TOKEN_STORAGE_KEY) || CONFIG.token || '',
   folders: [],
   currentFolder: ''
 };
@@ -10,6 +14,7 @@ const state = {
 const elements = {
   statusText: document.querySelector('#statusText'),
   apiInput: document.querySelector('#apiInput'),
+  tokenInput: document.querySelector('#tokenInput'),
   saveApiButton: document.querySelector('#saveApiButton'),
   refreshButton: document.querySelector('#refreshButton'),
   rootButton: document.querySelector('#rootButton'),
@@ -27,9 +32,13 @@ const elements = {
 };
 
 elements.apiInput.value = state.apiBase;
+elements.tokenInput.value = state.token;
 
 function apiUrl(path, params = {}) {
   const url = new URL(path, state.apiBase);
+  if (state.token) {
+    url.searchParams.set('token', state.token);
+  }
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null) {
       url.searchParams.set(key, value);
@@ -39,8 +48,12 @@ function apiUrl(path, params = {}) {
 }
 
 async function requestJson(path, params) {
-  const response = await fetch(apiUrl(path, params));
+  const headers = state.token ? { 'X-Gallery-Token': state.token } : {};
+  const response = await fetch(apiUrl(path, params), { headers });
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('访问令牌不正确或缺失');
+    }
     throw new Error(`HTTP ${response.status}`);
   }
   return response.json();
@@ -245,7 +258,9 @@ async function refreshAll() {
 
 elements.saveApiButton.addEventListener('click', () => {
   state.apiBase = elements.apiInput.value.trim().replace(/\/+$/, '') || DEFAULT_API_BASE;
+  state.token = elements.tokenInput.value.trim();
   localStorage.setItem(API_STORAGE_KEY, state.apiBase);
+  localStorage.setItem(TOKEN_STORAGE_KEY, state.token);
   elements.apiInput.value = state.apiBase;
   refreshAll();
 });

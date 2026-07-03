@@ -111,6 +111,10 @@ h2 {
   background: #fff;
 }
 
+.actions input[type="password"] {
+  width: min(180px, 24vw);
+}
+
 .workspace {
   display: grid;
   grid-template-columns: 330px minmax(0, 1fr);
@@ -317,6 +321,10 @@ h2 {
   }
 
   .actions input {
+    width: 100%;
+  }
+
+  .actions input[type="password"] {
     width: 100%;
   }
 
