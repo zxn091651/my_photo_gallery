@@ -15,8 +15,6 @@ const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 const isHttpsPage = window.location.protocol === 'https:';
 const FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 6 : 12;
 const TAP_SLOP = 2;
-const PREVIOUS_PEEK_SLOP = 14;
-const SWIPE_COMMIT_DISTANCE = 96;
 
 const state = {
   apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
@@ -489,7 +487,7 @@ function attachSwipeHandlers(card) {
       card.style.transform = '';
     }
     card.style.setProperty('--swipe-progress', String(Math.min(Math.abs(deltaX) / 160, 1)));
-    if (deltaX > PREVIOUS_PEEK_SLOP) {
+    if (deltaX > 0) {
       setPreviousPeekPosition(ensurePreviousPeek(card), deltaX);
     } else if (state.drag.previousCard) {
       removePreviousPeek(state.drag.previousCard);
@@ -514,25 +512,36 @@ function attachSwipeHandlers(card) {
       card.releasePointerCapture(event.pointerId);
     } catch {}
 
-    if (Math.abs(deltaX) > SWIPE_COMMIT_DISTANCE) {
-      if (deltaX < 0) {
-        removePreviousPeek(previousCard);
-        card.style.transform = `translate(${-window.innerWidth}px, 24px) rotate(-18deg)`;
-        setTimeout(() => navigateMedia(1), 180);
-        return;
-      }
+    if (deltaX < 0) {
+      removePreviousPeek(previousCard);
+      card.style.transform = `translate(${-window.innerWidth}px, 24px) rotate(-18deg)`;
+      setTimeout(() => navigateMedia(1), 180);
+      return;
+    }
 
-      if (previousIndex === undefined) {
-        removePreviousPeek(previousCard);
+    if (deltaX > 0) {
+      const activePreviousIndex = previousIndex ?? wrappedMediaIndex(state.activeMediaIndex - 1);
+      let activePreviousCard = previousCard;
+      if (!activePreviousCard && state.mediaFiles.length > 1 && card.parentElement) {
+        activePreviousCard = createDeckCard(state.mediaFiles[activePreviousIndex], activePreviousIndex, {
+          extraClass: 'previous-peek',
+          isPriority: true,
+          zIndex: 12
+        });
+        setPreviousPeekPosition(activePreviousCard, deltaX);
+        card.parentElement.append(activePreviousCard);
+      }
+      if (activePreviousIndex === undefined) {
+        removePreviousPeek(activePreviousCard);
         resetActiveCard(card);
         return;
       }
 
       resetActiveCard(card);
-      setPreviousPeekPosition(previousCard, window.innerWidth, true);
+      setPreviousPeekPosition(activePreviousCard, window.innerWidth, true);
       setTimeout(() => {
-        if (previousCard) previousCard.remove();
-        state.activeMediaIndex = previousIndex;
+        if (activePreviousCard) activePreviousCard.remove();
+        state.activeMediaIndex = activePreviousIndex;
         renderMediaDeck();
       }, 180);
       return;
