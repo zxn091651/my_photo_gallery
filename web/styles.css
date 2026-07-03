@@ -297,7 +297,7 @@ h2 {
 
 .folder-pager {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   min-height: 42px;
@@ -333,6 +333,10 @@ h2 {
   padding: 0;
   font-size: 25px;
   line-height: 1;
+}
+
+.page-edge {
+  width: 34px;
 }
 
 .page-button:disabled {
@@ -441,6 +445,8 @@ h2 {
     transform 220ms ease,
     opacity 220ms ease;
   user-select: none;
+  contain: layout paint;
+  will-change: transform, opacity;
 }
 
 .deck-card.active {
@@ -475,6 +481,12 @@ h2 {
 
 .deck-card.returning {
   pointer-events: none;
+}
+
+.deck-card.previous-peek {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(100vw);
 }
 
 .deck-preview {
@@ -727,6 +739,26 @@ h2 {
 
   .folder-page-shell {
     gap: 10px;
+  }
+
+  .folder-pager {
+    gap: 5px;
+  }
+
+  .page-button {
+    min-width: 54px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .page-arrow {
+    width: 32px;
+    min-height: 36px;
+    font-size: 22px;
+  }
+
+  .page-edge {
+    width: 30px;
   }
 
   .folder-card {

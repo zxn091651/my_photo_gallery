@@ -25,6 +25,7 @@ const state = {
   mediaFiles: [],
   activeMediaIndex: 0,
   deckAnimation: null,
+  preloadTimer: null,
   drag: null
 };
 
@@ -237,6 +238,17 @@ function createPageButton(pageIndex) {
   return button;
 }
 
+function createPagerArrow(label, title, targetPage, disabled, extraClass = '') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `page-arrow${extraClass ? ` ${extraClass}` : ''}`;
+  button.textContent = label;
+  button.title = title;
+  button.disabled = disabled;
+  button.addEventListener('click', () => setFolderPage(targetPage));
+  return button;
+}
+
 function renderFolderPager(pageCount) {
   if (pageCount <= 1) return null;
 
@@ -260,6 +272,13 @@ function renderFolderPager(pageCount) {
   nextButton.disabled = state.folderPage >= pageCount - 1;
   nextButton.addEventListener('click', () => setFolderPage(state.folderPage + 1));
 
+  previousButton.textContent = '‹';
+  previousButton.title = '上一页';
+  nextButton.textContent = '›';
+  nextButton.title = '下一页';
+  const firstButton = createPagerArrow('«', '首页', 0, state.folderPage <= 0, 'page-edge');
+  const lastButton = createPagerArrow('»', '最后一页', pageCount - 1, state.folderPage >= pageCount - 1, 'page-edge');
+
   const pageButtons = document.createElement('div');
   pageButtons.className = 'page-buttons';
 
@@ -270,7 +289,7 @@ function renderFolderPager(pageCount) {
     pageButtons.append(createPageButton(pageIndex));
   }
 
-  pager.append(previousButton, pageButtons, nextButton);
+  pager.append(firstButton, previousButton, pageButtons, nextButton, lastButton);
   return pager;
 }
 
@@ -370,16 +389,71 @@ function createMediaElement(file, isPriority) {
   return video;
 }
 
+function createDeckCard(file, absoluteIndex, options = {}) {
+  const isTopCard = Boolean(options.isTopCard);
+  const card = document.createElement('article');
+  card.className = `deck-card${isTopCard ? ' active' : ''}${options.extraClass ? ` ${options.extraClass}` : ''}`;
+  card.style.setProperty('--stack-index', String(options.stackIndex || 0));
+  card.style.zIndex = String(options.zIndex || 10);
+
+  const preview = document.createElement('div');
+  preview.className = 'deck-preview';
+  preview.append(createMediaElement(file, Boolean(options.isPriority)));
+
+  const label = document.createElement('div');
+  label.className = 'deck-label';
+  label.innerHTML = `
+    <span>${file.type === 'image' ? '鐓х墖' : '瑙嗛'} 路 ${absoluteIndex + 1}/${state.mediaFiles.length}</span>
+    <strong></strong>
+    <small>${formatBytes(file.size)}</small>
+  `;
+  label.querySelector('strong').textContent = file.name;
+
+  card.append(preview, label);
+  return card;
+}
+
+function setPreviousPeekPosition(card, deltaX, animate = false) {
+  if (!card) return;
+  const progress = Math.min(Math.max(deltaX / 180, 0), 1);
+  const offset = Math.max(window.innerWidth - deltaX * 1.18, 0);
+  card.style.transition = animate ? 'transform 180ms ease, opacity 180ms ease' : 'none';
+  card.style.opacity = String(Math.min(1, 0.18 + progress * 0.82));
+  card.style.transform = `translate(${offset}px, ${24 - progress * 24}px) rotate(${18 - progress * 18}deg)`;
+}
+
+function removePreviousPeek(card) {
+  if (!card) return;
+  card.style.transition = 'transform 160ms ease, opacity 160ms ease';
+  card.style.opacity = '0';
+  card.style.transform = `translate(${window.innerWidth}px, 24px) rotate(18deg)`;
+  setTimeout(() => card.remove(), 170);
+}
+
 function attachSwipeHandlers(card) {
   card.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return;
     state.drag = {
       startX: event.clientX,
       startY: event.clientY,
-      moved: false
+      moved: false,
+      previousCard: null
     };
     card.classList.add('dragging');
     card.setPointerCapture(event.pointerId);
+
+    if (state.activeMediaIndex > 0 && card.parentElement) {
+      const previousIndex = state.activeMediaIndex - 1;
+      const previousCard = createDeckCard(state.mediaFiles[previousIndex], previousIndex, {
+        extraClass: 'previous-peek',
+        isPriority: true,
+        zIndex: 12
+      });
+      setPreviousPeekPosition(previousCard, 0);
+      card.parentElement.append(previousCard);
+      state.drag.previousCard = previousCard;
+      card.style.zIndex = '11';
+    }
   });
 
   card.addEventListener('pointermove', (event) => {
@@ -390,6 +464,9 @@ function attachSwipeHandlers(card) {
     const rotation = deltaX / 18;
     card.style.transform = `translate(${deltaX}px, ${deltaY}px) rotate(${rotation}deg)`;
     card.style.setProperty('--swipe-progress', String(Math.min(Math.abs(deltaX) / 160, 1)));
+    if (state.drag.previousCard) {
+      setPreviousPeekPosition(state.drag.previousCard, Math.max(deltaX, 0));
+    }
     card.dataset.swipeLabel = deltaX < 0 ? '下一张' : '上一张';
   });
 
@@ -397,29 +474,43 @@ function attachSwipeHandlers(card) {
     if (!state.drag) return;
     const deltaX = event.clientX - state.drag.startX;
     const moved = state.drag.moved;
+    const previousCard = state.drag.previousCard;
     state.drag = null;
     card.classList.remove('dragging');
 
     if (Math.abs(deltaX) > 96) {
       if (deltaX < 0) {
+        removePreviousPeek(previousCard);
         card.style.transform = `translate(${-window.innerWidth}px, 24px) rotate(-18deg)`;
         setTimeout(() => navigateMedia(1), 180);
         return;
       }
 
       if (state.activeMediaIndex <= 0) {
+        removePreviousPeek(previousCard);
         card.style.transform = '';
+        card.style.opacity = '';
+        card.style.zIndex = '';
         card.style.removeProperty('--swipe-progress');
         delete card.dataset.swipeLabel;
         return;
       }
 
-      card.style.transform = `translate(${window.innerWidth}px, 24px) rotate(18deg)`;
-      setTimeout(navigateToPreviousMedia, 120);
+      card.style.transform = `translate(${window.innerWidth * 0.28}px, 18px) scale(0.94) rotate(8deg)`;
+      card.style.opacity = '0.32';
+      setPreviousPeekPosition(previousCard, window.innerWidth, true);
+      setTimeout(() => {
+        if (previousCard) previousCard.remove();
+        state.activeMediaIndex -= 1;
+        renderMediaDeck();
+      }, 180);
       return;
     }
 
+    removePreviousPeek(previousCard);
     card.style.transform = '';
+    card.style.opacity = '';
+    card.style.zIndex = '';
     card.style.removeProperty('--swipe-progress');
     delete card.dataset.swipeLabel;
     if (!moved) {
@@ -428,9 +519,13 @@ function attachSwipeHandlers(card) {
   });
 
   card.addEventListener('pointercancel', () => {
+    const previousCard = state.drag?.previousCard;
     state.drag = null;
     card.classList.remove('dragging');
+    removePreviousPeek(previousCard);
     card.style.transform = '';
+    card.style.opacity = '';
+    card.style.zIndex = '';
     card.style.removeProperty('--swipe-progress');
     delete card.dataset.swipeLabel;
   });
@@ -438,8 +533,8 @@ function attachSwipeHandlers(card) {
 
 function preloadUpcomingThumbnails() {
   const preloadFiles = [
-    ...state.mediaFiles.slice(Math.max(0, state.activeMediaIndex - 3), state.activeMediaIndex),
-    ...state.mediaFiles.slice(state.activeMediaIndex + 1, state.activeMediaIndex + 8)
+    ...state.mediaFiles.slice(Math.max(0, state.activeMediaIndex - 1), state.activeMediaIndex),
+    ...state.mediaFiles.slice(state.activeMediaIndex + 1, state.activeMediaIndex + 4)
   ];
 
   for (const file of preloadFiles) {
@@ -449,6 +544,17 @@ function preloadUpcomingThumbnails() {
     image.fetchPriority = 'low';
     image.src = apiUrl(file.thumbUrl).toString();
   }
+}
+
+function scheduleThumbnailPreload() {
+  if (state.preloadTimer) {
+    clearTimeout(state.preloadTimer);
+  }
+
+  state.preloadTimer = setTimeout(() => {
+    state.preloadTimer = null;
+    preloadUpcomingThumbnails();
+  }, 420);
 }
 
 function renderMediaDeck() {
@@ -462,7 +568,7 @@ function renderMediaDeck() {
   const deck = document.createElement('div');
   deck.className = 'deck';
 
-  const visibleFiles = state.mediaFiles.slice(state.activeMediaIndex, state.activeMediaIndex + 4);
+  const visibleFiles = state.mediaFiles.slice(state.activeMediaIndex, state.activeMediaIndex + 3);
   [...visibleFiles].reverse().forEach((file, reverseIndex) => {
     const indexFromTop = visibleFiles.length - 1 - reverseIndex;
     const absoluteIndex = state.activeMediaIndex + indexFromTop;
@@ -498,7 +604,7 @@ function renderMediaDeck() {
 
     const preview = document.createElement('div');
     preview.className = 'deck-preview';
-    preview.append(createMediaElement(file, indexFromTop <= 1));
+    preview.append(createMediaElement(file, isTopCard));
 
     const label = document.createElement('div');
     label.className = 'deck-label';
@@ -525,7 +631,7 @@ function renderMediaDeck() {
   controls.append(downloadLink);
   deckShell.append(deck, controls);
   elements.mediaGrid.append(deckShell);
-  preloadUpcomingThumbnails();
+  scheduleThumbnailPreload();
 }
 
 async function openFolder(folderPath = '') {
@@ -543,10 +649,9 @@ async function openFolder(folderPath = '') {
     state.folderPage = 0;
     renderMedia(data.files || [], state.folders);
 
-    const folderText = `${state.folders.length} 个文件夹`;
     const mediaText = `${data.files?.length || 0} 个照片/视频`;
     elements.mediaCount.textContent = state.mediaFiles.length
-      ? `${folderText}，${mediaText}`
+      ? mediaText
       : state.folders.length
         ? '请选择一个文件夹'
         : '没有可显示的照片或视频';
