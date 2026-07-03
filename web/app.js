@@ -383,31 +383,13 @@ function renderMediaDeck() {
   const controls = document.createElement('div');
   controls.className = 'deck-controls';
 
-  const previousButton = document.createElement('button');
-  previousButton.type = 'button';
-  previousButton.textContent = '上一张';
-  previousButton.disabled = state.activeMediaIndex === 0;
-  previousButton.addEventListener('click', () => navigateMedia(-1));
-
-  const openButton = document.createElement('button');
-  openButton.type = 'button';
-  openButton.className = 'primary-control';
-  openButton.textContent = '打开查看';
-  openButton.addEventListener('click', () => openViewer(currentMediaFile()));
-
   const downloadLink = document.createElement('a');
   downloadLink.className = 'button-link';
   downloadLink.textContent = '下载';
   downloadLink.href = apiUrl(currentMediaFile().downloadUrl).toString();
   downloadLink.setAttribute('download', currentMediaFile().name);
 
-  const nextButton = document.createElement('button');
-  nextButton.type = 'button';
-  nextButton.textContent = '下一张';
-  nextButton.disabled = state.activeMediaIndex >= state.mediaFiles.length - 1;
-  nextButton.addEventListener('click', () => navigateMedia(1));
-
-  controls.append(previousButton, openButton, downloadLink, nextButton);
+  controls.append(downloadLink);
   deckShell.append(deck, controls);
   elements.mediaGrid.append(deckShell);
   preloadUpcomingThumbnails();

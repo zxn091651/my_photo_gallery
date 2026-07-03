@@ -433,17 +433,16 @@ h2 {
 }
 
 .deck-controls {
-  display: grid;
-  grid-template-columns: 1fr 1.25fr 1fr 1fr;
-  gap: 9px;
+  display: flex;
+  justify-content: center;
   padding-bottom: max(0px, env(safe-area-inset-bottom));
 }
 
 .deck-controls button,
 .deck-controls .button-link {
-  min-width: 0;
+  min-width: min(240px, 72%);
   min-height: 48px;
-  padding: 0 12px;
+  padding: 0 22px;
   font-weight: 800;
 }
 
@@ -658,15 +657,13 @@ h2 {
   .deck-controls {
     position: sticky;
     bottom: 0;
-    grid-template-columns: 1fr 1.2fr 1fr 1fr;
-    gap: 8px;
     padding-top: 4px;
   }
 
   .deck-controls button,
   .deck-controls .button-link {
     min-height: 46px;
-    padding: 0 8px;
+    padding: 0 18px;
     font-size: 14px;
   }
 
@@ -695,10 +692,6 @@ h2 {
 
   .deck-shell {
     min-height: min(64svh, 560px);
-  }
-
-  .deck-controls {
-    grid-template-columns: 1fr 1fr;
   }
 
 }
