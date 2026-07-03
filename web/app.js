@@ -25,13 +25,7 @@ const state = {
 
 const elements = {
   statusText: document.querySelector('#statusText'),
-  apiInput: document.querySelector('#apiInput'),
-  saveApiButton: document.querySelector('#saveApiButton'),
-  refreshButton: document.querySelector('#refreshButton'),
   rootButton: document.querySelector('#rootButton'),
-  folderCount: document.querySelector('#folderCount'),
-  folderList: document.querySelector('#folderList'),
-  childFolderList: document.querySelector('#childFolderList'),
   currentFolder: document.querySelector('#currentFolder'),
   mediaCount: document.querySelector('#mediaCount'),
   mediaGrid: document.querySelector('#mediaGrid'),
@@ -42,18 +36,13 @@ const elements = {
   closeViewerButton: document.querySelector('#closeViewerButton')
 };
 
-elements.apiInput.value = state.apiBase;
-elements.apiInput.placeholder = isHostedFrontend
-  ? 'https://你的公网后端地址'
-  : window.location.origin;
-
 function apiUrl(path, params = {}) {
   if (!state.apiBase) {
-    throw new Error('请先填写公网后端地址。');
+    throw new Error('没有配置后端地址。请直接打开 http://photo.fucku.top。');
   }
 
   if (isHttpsPage && state.apiBase.startsWith('http://')) {
-    throw new Error('当前页面是 HTTPS，不能连接 HTTP 后端。请直接打开 http://photo.fucku.top，或把隧道配置为 HTTPS。');
+    throw new Error('当前页面是 HTTPS，不能连接 HTTP 后端。请直接打开 http://photo.fucku.top。');
   }
 
   const url = new URL(path, state.apiBase);
@@ -87,7 +76,7 @@ function formatBytes(value) {
 
 function setStatus(status) {
   if (!status) {
-    elements.statusText.textContent = '无法读取后端状态。请确认当前页面地址是 http://photo.fucku.top，且后端和内网穿透隧道正在运行。';
+    elements.statusText.textContent = '无法读取后端状态。请确认电脑、后端和内网穿透隧道正在运行。';
     elements.statusText.className = 'error';
     return;
   }
@@ -105,49 +94,61 @@ function setStatus(status) {
   }
 
   const volume = status.volumeName ? `，卷标 ${status.volumeName}` : '';
-  elements.statusText.textContent = `本机后端在线，${status.driveLetter}: 盘已连接${volume}。`;
+  elements.statusText.textContent = `影像备份已连接${volume}。`;
 }
 
-function renderFolders() {
-  elements.folderCount.textContent = String(state.folders.length);
-  elements.folderList.replaceChildren();
+function folderTitle(folderPath) {
+  return folderPath || '影像备份';
+}
 
-  if (!state.folders.length) {
+function createFolderButton(folder) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'folder-card';
+  button.title = folder.path;
+
+  const name = document.createElement('strong');
+  name.textContent = folder.name;
+
+  const meta = document.createElement('span');
+  meta.textContent = '打开相册';
+
+  button.append(name, meta);
+  button.addEventListener('click', () => openFolder(folder.path));
+  return button;
+}
+
+function renderFolderGallery(folders) {
+  elements.mediaGrid.replaceChildren();
+
+  if (!folders.length) {
     const empty = document.createElement('p');
     empty.className = 'empty';
-    empty.textContent = '当前目录下没有子文件夹。';
-    elements.folderList.append(empty);
+    empty.textContent = '这里暂时没有可显示的照片、视频或文件夹。';
+    elements.mediaGrid.append(empty);
     return;
   }
 
-  for (const folder of state.folders) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `folder-item${folder.path === state.currentFolder ? ' active' : ''}`;
-    button.textContent = folder.name;
-    button.title = folder.path;
-    button.addEventListener('click', () => openFolder(folder.path));
-    elements.folderList.append(button);
-  }
-}
-
-function renderChildFolders(folders) {
-  elements.childFolderList.replaceChildren();
+  const gallery = document.createElement('section');
+  gallery.className = 'folder-gallery';
+  gallery.setAttribute('aria-label', '文件夹');
 
   for (const folder of folders) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'child-folder';
-    button.textContent = folder.name;
-    button.title = folder.path;
-    button.addEventListener('click', () => openFolder(folder.path));
-    elements.childFolderList.append(button);
+    gallery.append(createFolderButton(folder));
   }
+
+  elements.mediaGrid.append(gallery);
 }
 
-function renderMedia(files) {
+function renderMedia(files, folders) {
   state.mediaFiles = files || [];
   state.activeMediaIndex = 0;
+
+  if (!state.mediaFiles.length) {
+    renderFolderGallery(folders || []);
+    return;
+  }
+
   renderMediaDeck();
 }
 
@@ -254,14 +255,6 @@ function preloadUpcomingThumbnails() {
 function renderMediaDeck() {
   elements.mediaGrid.replaceChildren();
 
-  if (!state.mediaFiles.length) {
-    const empty = document.createElement('p');
-    empty.className = 'empty';
-    empty.textContent = '这个文件夹里没有可预览的照片或视频。';
-    elements.mediaGrid.append(empty);
-    return;
-  }
-
   const deckShell = document.createElement('section');
   deckShell.className = 'deck-shell';
 
@@ -343,18 +336,24 @@ function renderMediaDeck() {
 
 async function openFolder(folderPath = '') {
   state.currentFolder = folderPath;
-  elements.currentFolder.textContent = folderPath || '影像备份';
-  elements.statusText.textContent = '正在加载目录...';
-  elements.mediaCount.textContent = '正在加载照片和视频...';
+  elements.currentFolder.textContent = folderTitle(folderPath);
+  elements.statusText.textContent = '正在加载影像备份...';
+  elements.mediaCount.textContent = '正在读取文件夹...';
+  elements.rootButton.hidden = !folderPath;
 
   try {
     const data = await requestJson('/api/media', { folder: folderPath });
     setStatus(data.status);
     state.folders = data.folders || [];
-    renderFolders();
-    renderChildFolders(state.folders);
-    renderMedia(data.files || []);
-    elements.mediaCount.textContent = `${state.folders.length} 个子文件夹，${data.files?.length || 0} 个照片/视频`;
+    renderMedia(data.files || [], state.folders);
+
+    const folderText = `${state.folders.length} 个文件夹`;
+    const mediaText = `${data.files?.length || 0} 个照片/视频`;
+    elements.mediaCount.textContent = state.mediaFiles.length
+      ? `${folderText}，${mediaText}`
+      : state.folders.length
+        ? '请选择一个文件夹'
+        : '没有可显示的照片或视频';
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
     elements.statusText.textContent = message === 'Failed to fetch'
@@ -362,11 +361,10 @@ async function openFolder(folderPath = '') {
       : message || '加载失败。';
     elements.statusText.className = 'error';
     state.folders = [];
-    renderFolders();
-    renderChildFolders([]);
-    renderMedia([]);
+    state.mediaFiles = [];
+    renderFolderGallery([]);
     elements.currentFolder.textContent = '无法连接';
-    elements.mediaCount.textContent = '请检查后端地址、隧道和当前目录。';
+    elements.mediaCount.textContent = '请检查后端和隧道。';
   }
 }
 
@@ -397,22 +395,6 @@ function openViewer(file) {
   elements.viewerDialog.showModal();
 }
 
-function refreshAll() {
-  openFolder(state.currentFolder);
-}
-
-elements.saveApiButton.addEventListener('click', () => {
-  state.apiBase = elements.apiInput.value.trim().replace(/\/+$/, '') || DEFAULT_API_BASE;
-  if (state.apiBase) {
-    localStorage.setItem(API_STORAGE_KEY, state.apiBase);
-  } else {
-    localStorage.removeItem(API_STORAGE_KEY);
-  }
-  elements.apiInput.value = state.apiBase;
-  refreshAll();
-});
-
-elements.refreshButton.addEventListener('click', refreshAll);
 elements.rootButton.addEventListener('click', () => openFolder(''));
 elements.closeViewerButton.addEventListener('click', () => {
   elements.viewerDialog.close();
@@ -424,8 +406,7 @@ elements.viewerDialog.addEventListener('close', () => {
 });
 
 document.addEventListener('keydown', (event) => {
-  const target = event.target;
-  if (target instanceof HTMLInputElement || elements.viewerDialog.open || !state.mediaFiles.length) {
+  if (elements.viewerDialog.open || !state.mediaFiles.length) {
     return;
   }
 
@@ -438,4 +419,4 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-refreshAll();
+openFolder('');

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>zxn's Photo Gallery</title>
-    <link rel="stylesheet" href="./styles.css?v=20260704-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260704-4" />
   </head>
   <body>
     <main class="shell">
@@ -13,22 +13,9 @@
           <h1>zxn's Photo Gallery</h1>
           <p id="statusText">正在连接本机后端...</p>
         </div>
-        <div class="actions">
-          <input id="apiInput" type="url" aria-label="后端地址" spellcheck="false" />
-          <button id="saveApiButton" type="button">连接</button>
-          <button id="refreshButton" type="button">刷新</button>
-        </div>
       </section>
 
       <section class="workspace">
-        <aside class="sidebar" aria-label="文件夹列表">
-          <div class="sidebar-header">
-            <strong>当前子文件夹</strong>
-            <span id="folderCount">0</span>
-          </div>
-          <div id="folderList" class="folder-list"></div>
-        </aside>
-
         <section class="content" aria-label="媒体内容">
           <div class="content-header">
             <div>
@@ -37,7 +24,6 @@
             </div>
             <button id="rootButton" type="button">根目录</button>
           </div>
-          <div id="childFolderList" class="child-folders"></div>
           <div id="mediaGrid" class="media-grid"></div>
         </section>
       </section>
@@ -54,7 +40,7 @@
       <div id="viewerStage" class="viewer-stage"></div>
     </dialog>
 
-    <script src="./config.js?v=20260704-3"></script>
-    <script type="module" src="./app.js?v=20260704-3"></script>
+    <script src="./config.js?v=20260704-4"></script>
+    <script type="module" src="./app.js?v=20260704-4"></script>
   </body>
 </html>
