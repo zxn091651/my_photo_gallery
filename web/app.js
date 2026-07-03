@@ -17,7 +17,10 @@ const isHttpsPage = window.location.protocol === 'https:';
 const state = {
   apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
   folders: [],
-  currentFolder: ''
+  currentFolder: '',
+  mediaFiles: [],
+  activeMediaIndex: 0,
+  drag: null
 };
 
 const elements = {
@@ -143,9 +146,101 @@ function renderChildFolders(folders) {
 }
 
 function renderMedia(files) {
+  state.mediaFiles = files || [];
+  state.activeMediaIndex = 0;
+  renderMediaDeck();
+}
+
+function currentMediaFile() {
+  return state.mediaFiles[state.activeMediaIndex] || null;
+}
+
+function setActiveMediaIndex(index) {
+  const maxIndex = Math.max(0, state.mediaFiles.length - 1);
+  state.activeMediaIndex = Math.min(Math.max(index, 0), maxIndex);
+  renderMediaDeck();
+}
+
+function navigateMedia(direction) {
+  setActiveMediaIndex(state.activeMediaIndex + direction);
+}
+
+function createMediaElement(file, isTopCard) {
+  const source = apiUrl(file.viewUrl).toString();
+
+  if (file.type === 'image') {
+    const image = document.createElement('img');
+    image.className = 'deck-media';
+    image.loading = isTopCard ? 'eager' : 'lazy';
+    image.alt = file.name;
+    image.src = source;
+    return image;
+  }
+
+  const video = document.createElement('video');
+  video.className = 'deck-media';
+  video.preload = 'metadata';
+  video.muted = true;
+  video.playsInline = true;
+  video.src = `${source}#t=0.1`;
+  return video;
+}
+
+function attachSwipeHandlers(card) {
+  card.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    state.drag = {
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false
+    };
+    card.classList.add('dragging');
+    card.setPointerCapture(event.pointerId);
+  });
+
+  card.addEventListener('pointermove', (event) => {
+    if (!state.drag) return;
+    const deltaX = event.clientX - state.drag.startX;
+    const deltaY = event.clientY - state.drag.startY;
+    state.drag.moved = state.drag.moved || Math.abs(deltaX) > 6 || Math.abs(deltaY) > 6;
+    const rotation = deltaX / 18;
+    card.style.transform = `translate(${deltaX}px, ${deltaY}px) rotate(${rotation}deg)`;
+    card.style.setProperty('--swipe-progress', String(Math.min(Math.abs(deltaX) / 160, 1)));
+  });
+
+  card.addEventListener('pointerup', (event) => {
+    if (!state.drag) return;
+    const deltaX = event.clientX - state.drag.startX;
+    const moved = state.drag.moved;
+    state.drag = null;
+    card.classList.remove('dragging');
+
+    if (Math.abs(deltaX) > 96) {
+      const exitX = deltaX > 0 ? window.innerWidth : -window.innerWidth;
+      card.style.transform = `translate(${exitX}px, 24px) rotate(${deltaX > 0 ? 18 : -18}deg)`;
+      setTimeout(() => navigateMedia(deltaX > 0 ? 1 : -1), 180);
+      return;
+    }
+
+    card.style.transform = '';
+    card.style.removeProperty('--swipe-progress');
+    if (!moved) {
+      openViewer(currentMediaFile());
+    }
+  });
+
+  card.addEventListener('pointercancel', () => {
+    state.drag = null;
+    card.classList.remove('dragging');
+    card.style.transform = '';
+    card.style.removeProperty('--swipe-progress');
+  });
+}
+
+function renderMediaDeck() {
   elements.mediaGrid.replaceChildren();
 
-  if (!files.length) {
+  if (!state.mediaFiles.length) {
     const empty = document.createElement('p');
     empty.className = 'empty';
     empty.textContent = '这个文件夹里没有可预览的照片或视频。';
@@ -153,52 +248,82 @@ function renderMedia(files) {
     return;
   }
 
-  for (const file of files) {
+  const deckShell = document.createElement('section');
+  deckShell.className = 'deck-shell';
+
+  const deck = document.createElement('div');
+  deck.className = 'deck';
+
+  const visibleFiles = state.mediaFiles.slice(state.activeMediaIndex, state.activeMediaIndex + 4);
+  [...visibleFiles].reverse().forEach((file, reverseIndex) => {
+    const indexFromTop = visibleFiles.length - 1 - reverseIndex;
+    const absoluteIndex = state.activeMediaIndex + indexFromTop;
+    const isTopCard = indexFromTop === 0;
     const card = document.createElement('article');
-    card.className = 'media-card';
+    card.className = `deck-card${isTopCard ? ' active' : ''}`;
+    card.style.setProperty('--stack-index', String(indexFromTop));
+    card.style.zIndex = String(10 - indexFromTop);
 
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.className = 'thumb-button';
-    trigger.title = file.name;
-    trigger.style.padding = '0';
-    trigger.style.border = '0';
-    trigger.style.width = '100%';
-    trigger.addEventListener('click', () => openViewer(file));
-
-    const source = apiUrl(file.viewUrl).toString();
-
-    if (file.type === 'image') {
-      const image = document.createElement('img');
-      image.className = 'thumb';
-      image.loading = 'lazy';
-      image.alt = file.name;
-      image.src = source;
-      trigger.append(image);
-    } else {
-      const video = document.createElement('video');
-      video.className = 'thumb video-thumb';
-      video.preload = 'metadata';
-      video.muted = true;
-      video.src = `${source}#t=0.1`;
-      trigger.append(video);
+    if (isTopCard) {
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', `打开 ${file.name}`);
+      attachSwipeHandlers(card);
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openViewer(file);
+        }
+      });
     }
 
-    const info = document.createElement('div');
-    info.className = 'media-info';
+    const preview = document.createElement('div');
+    preview.className = 'deck-preview';
+    preview.append(createMediaElement(file, isTopCard));
 
-    const name = document.createElement('span');
-    name.className = 'media-name';
-    name.textContent = file.name;
+    const label = document.createElement('div');
+    label.className = 'deck-label';
+    label.innerHTML = `
+      <span>${file.type === 'image' ? '照片' : '视频'} · ${absoluteIndex + 1}/${state.mediaFiles.length}</span>
+      <strong></strong>
+      <small>${formatBytes(file.size)}</small>
+    `;
+    label.querySelector('strong').textContent = file.name;
 
-    const meta = document.createElement('div');
-    meta.className = 'media-meta';
-    meta.innerHTML = `<span>${file.type === 'image' ? '照片' : '视频'}</span><span>${formatBytes(file.size)}</span>`;
+    card.append(preview, label);
+    deck.append(card);
+  });
 
-    info.append(name, meta);
-    card.append(trigger, info);
-    elements.mediaGrid.append(card);
-  }
+  const controls = document.createElement('div');
+  controls.className = 'deck-controls';
+
+  const previousButton = document.createElement('button');
+  previousButton.type = 'button';
+  previousButton.textContent = '上一张';
+  previousButton.disabled = state.activeMediaIndex === 0;
+  previousButton.addEventListener('click', () => navigateMedia(-1));
+
+  const openButton = document.createElement('button');
+  openButton.type = 'button';
+  openButton.className = 'primary-control';
+  openButton.textContent = '打开查看';
+  openButton.addEventListener('click', () => openViewer(currentMediaFile()));
+
+  const downloadLink = document.createElement('a');
+  downloadLink.className = 'button-link';
+  downloadLink.textContent = '下载';
+  downloadLink.href = apiUrl(currentMediaFile().downloadUrl).toString();
+  downloadLink.setAttribute('download', currentMediaFile().name);
+
+  const nextButton = document.createElement('button');
+  nextButton.type = 'button';
+  nextButton.textContent = '下一张';
+  nextButton.disabled = state.activeMediaIndex >= state.mediaFiles.length - 1;
+  nextButton.addEventListener('click', () => navigateMedia(1));
+
+  controls.append(previousButton, openButton, downloadLink, nextButton);
+  deckShell.append(deck, controls);
+  elements.mediaGrid.append(deckShell);
 }
 
 async function openFolder(folderPath = '') {
@@ -231,6 +356,8 @@ async function openFolder(folderPath = '') {
 }
 
 function openViewer(file) {
+  if (!file) return;
+
   elements.viewerTitle.textContent = file.name;
   elements.viewerStage.replaceChildren();
 
@@ -279,6 +406,21 @@ elements.closeViewerButton.addEventListener('click', () => {
 
 elements.viewerDialog.addEventListener('close', () => {
   elements.viewerStage.replaceChildren();
+});
+
+document.addEventListener('keydown', (event) => {
+  const target = event.target;
+  if (target instanceof HTMLInputElement || elements.viewerDialog.open || !state.mediaFiles.length) {
+    return;
+  }
+
+  if (event.key === 'ArrowLeft') {
+    navigateMedia(-1);
+  }
+
+  if (event.key === 'ArrowRight') {
+    navigateMedia(1);
+  }
 });
 
 refreshAll();
