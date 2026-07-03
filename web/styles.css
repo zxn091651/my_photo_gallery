@@ -113,7 +113,8 @@ button:disabled {
 
 .topbar,
 .content,
-.viewer {
+.viewer,
+.upload-dialog {
   border: 1px solid var(--line);
   background:
     linear-gradient(160deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.055)),
@@ -236,6 +237,12 @@ h2 {
 
 .content-header button {
   flex: 0 0 auto;
+}
+
+.header-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
 }
 
 .media-grid {
@@ -464,12 +471,19 @@ h2 {
   color: var(--danger);
 }
 
-.viewer {
+.viewer,
+.upload-dialog {
   width: min(1180px, calc(100vw - 18px));
   height: min(860px, calc(100vh - 18px));
   border-radius: 28px;
   padding: 0;
   color: #fff;
+}
+
+.upload-dialog {
+  width: min(520px, calc(100vw - 18px));
+  height: auto;
+  max-height: min(760px, calc(100vh - 18px));
 }
 
 .viewer::backdrop {
@@ -486,6 +500,50 @@ h2 {
   gap: 12px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.upload-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.dialog-header {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.upload-dialog label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.upload-dialog input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  padding: 0 12px;
+  font: inherit;
+}
+
+.upload-dialog input[type="file"] {
+  min-height: auto;
+  padding: 12px;
+}
+
+.upload-status {
+  min-height: 20px;
+  color: var(--muted);
 }
 
 .viewer-toolbar strong {
@@ -545,6 +603,10 @@ h2 {
   .content-header {
     align-items: flex-start;
     padding: 13px;
+  }
+
+  .header-actions {
+    flex-direction: column;
   }
 
   .content-header button {

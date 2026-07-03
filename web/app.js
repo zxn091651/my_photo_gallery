@@ -26,6 +26,7 @@ const state = {
 
 const elements = {
   statusText: document.querySelector('#statusText'),
+  uploadButton: document.querySelector('#uploadButton'),
   rootButton: document.querySelector('#rootButton'),
   currentFolder: document.querySelector('#currentFolder'),
   mediaCount: document.querySelector('#mediaCount'),
@@ -34,7 +35,16 @@ const elements = {
   viewerTitle: document.querySelector('#viewerTitle'),
   viewerStage: document.querySelector('#viewerStage'),
   downloadLink: document.querySelector('#downloadLink'),
-  closeViewerButton: document.querySelector('#closeViewerButton')
+  closeViewerButton: document.querySelector('#closeViewerButton'),
+  uploadDialog: document.querySelector('#uploadDialog'),
+  uploadForm: document.querySelector('#uploadForm'),
+  closeUploadButton: document.querySelector('#closeUploadButton'),
+  uploadFolderInput: document.querySelector('#uploadFolderInput'),
+  newFolderInput: document.querySelector('#newFolderInput'),
+  uploadPasswordInput: document.querySelector('#uploadPasswordInput'),
+  uploadFilesInput: document.querySelector('#uploadFilesInput'),
+  uploadStatus: document.querySelector('#uploadStatus'),
+  submitUploadButton: document.querySelector('#submitUploadButton')
 };
 
 function apiUrl(path, params = {}) {
@@ -61,6 +71,50 @@ async function requestJson(path, params) {
     throw new Error(`HTTP ${response.status}`);
   }
   return response.json();
+}
+
+async function uploadFiles() {
+  const files = Array.from(elements.uploadFilesInput.files || []);
+  const password = elements.uploadPasswordInput.value;
+  const folder = elements.uploadFolderInput.value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  const newFolder = elements.newFolderInput.value.trim();
+
+  if (!files.length) {
+    elements.uploadStatus.textContent = '请选择要上传的照片或视频。';
+    return;
+  }
+
+  elements.submitUploadButton.disabled = true;
+  elements.uploadStatus.textContent = '正在上传...';
+
+  try {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append('files', file, file.name);
+    }
+
+    const response = await fetch(apiUrl('/api/upload', { folder, newFolder }), {
+      method: 'POST',
+      headers: {
+        'X-Upload-Password': password
+      },
+      body: formData
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) {
+      throw new Error(data.details || data.error || `HTTP ${response.status}`);
+    }
+
+    elements.uploadStatus.textContent = `上传完成：${data.count} 个文件。`;
+    elements.uploadPasswordInput.value = '';
+    elements.uploadFilesInput.value = '';
+    await openFolder(state.currentFolder);
+  } catch (error) {
+    elements.uploadStatus.textContent = error instanceof Error ? error.message : '上传失败。';
+  } finally {
+    elements.submitUploadButton.disabled = false;
+  }
 }
 
 function formatBytes(value) {
@@ -450,7 +504,24 @@ function openViewer(file) {
   elements.viewerDialog.showModal();
 }
 
+function openUploadDialog() {
+  elements.uploadFolderInput.value = state.isRandomMode ? '' : state.currentFolder;
+  elements.newFolderInput.value = '';
+  elements.uploadPasswordInput.value = '';
+  elements.uploadFilesInput.value = '';
+  elements.uploadStatus.textContent = '';
+  elements.uploadDialog.showModal();
+}
+
+elements.uploadButton.addEventListener('click', openUploadDialog);
 elements.rootButton.addEventListener('click', () => openFolder(''));
+elements.closeUploadButton.addEventListener('click', () => {
+  elements.uploadDialog.close();
+});
+elements.uploadForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  uploadFiles();
+});
 elements.closeViewerButton.addEventListener('click', () => {
   elements.viewerDialog.close();
   elements.viewerStage.replaceChildren();

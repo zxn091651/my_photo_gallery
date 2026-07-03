@@ -140,5 +140,6 @@ cloudflared tunnel --url http://localhost:8787
 - `GET /api/media?folder=相对路径`：列出某个文件夹下的子文件夹、照片和视频。
 - `GET /api/file?path=相对路径`：预览照片/视频，支持视频 Range 请求。
 - `GET /api/download?path=相对路径`：下载文件。
+- `POST /api/upload`：上传照片/视频，需要 `X-Upload-Password`，可创建新文件夹；没有删除接口。
 
 支持的照片格式包括 `jpg`、`png`、`webp`、`gif`、`bmp`、`avif`、`tif`、`heic` 等；视频格式包括 `mp4`、`webm`、`mov`、`m4v`、`avi`、`mkv`、`mts`、`m2ts`、`3gp` 等。

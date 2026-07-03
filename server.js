@@ -1,11 +1,12 @@
 import { createServer } from 'node:http';
-import { stat, readdir, realpath, access, mkdir } from 'node:fs/promises';
-import { constants, createReadStream } from 'node:fs';
+import { stat, readdir, realpath, access, mkdir, rename } from 'node:fs/promises';
+import { constants, createReadStream, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import sharp from 'sharp';
+import Busboy from 'busboy';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -14,8 +15,10 @@ const HOST = process.env.HOST || '0.0.0.0';
 const MEDIA_ROOT = path.resolve(process.env.GALLERY_ROOT || 'F:\\影像备份');
 const DRIVE_LETTER = process.env.GALLERY_DRIVE || path.parse(MEDIA_ROOT).root.replace(/[:\\\/]/g, '') || 'F';
 const EXPECTED_DISK_SERIAL = normalizeDiskSerial(process.env.GALLERY_DISK_SERIAL || '');
+const UPLOAD_PASSWORD = process.env.GALLERY_UPLOAD_PASSWORD || '';
 const WEB_ROOT = path.join(__dirname, 'web');
 const THUMB_CACHE_ROOT = path.join(__dirname, '.cache', 'thumbs');
+const MAX_UPLOAD_BYTES = Number(process.env.GALLERY_MAX_UPLOAD_BYTES || 20 * 1024 * 1024 * 1024);
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg',
@@ -83,8 +86,8 @@ function sendJson(response, statusCode, payload) {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Range',
+    'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Range, X-Upload-Password',
     'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range'
   });
   response.end(body);
@@ -96,14 +99,40 @@ function sendError(response, statusCode, message, details = undefined) {
 
 function writeCors(response) {
   response.setHeader('Access-Control-Allow-Origin', '*');
-  response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, X-Upload-Password');
   response.setHeader('Access-Control-Expose-Headers', 'Accept-Ranges, Content-Length, Content-Range');
+}
+
+function uploadPasswordMatches(value = '') {
+  if (!UPLOAD_PASSWORD) return false;
+  const expected = Buffer.from(UPLOAD_PASSWORD);
+  const actual = Buffer.from(String(value));
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
 function normalizeRelativePath(value = '') {
   const decoded = String(value).replaceAll('\\', '/').replace(/^\/+/, '');
   return decoded === '.' ? '' : decoded;
+}
+
+function sanitizeFolderName(value = '') {
+  const name = String(value).trim();
+  if (!name || name === '.' || name === '..') return '';
+  if (/[<>:"/\\|?*\x00-\x1f]/.test(name)) return '';
+  return name.slice(0, 120);
+}
+
+function sanitizeFileName(value = '') {
+  const parsed = path.parse(String(value).replaceAll('\\', '/'));
+  const baseName = parsed.name
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/[. ]+$/g, '')
+    .trim()
+    .slice(0, 160);
+  const extension = parsed.ext.toLowerCase();
+  const safeBaseName = baseName || 'upload';
+  return `${safeBaseName}${extension}`;
 }
 
 async function getRootRealPath() {
@@ -126,6 +155,50 @@ async function resolveInsideMediaRoot(relativePath = '') {
   }
 
   return targetReal;
+}
+
+async function resolveWritableFolder(relativePath = '', newFolderName = '') {
+  const parent = await resolveInsideMediaRoot(relativePath);
+  const parentStat = await stat(parent);
+  if (!parentStat.isDirectory()) {
+    throw new Error('Upload target is not a folder.');
+  }
+
+  const safeNewFolderName = sanitizeFolderName(newFolderName);
+  if (newFolderName && !safeNewFolderName) {
+    throw new Error('Invalid new folder name.');
+  }
+
+  const target = safeNewFolderName ? path.resolve(parent, safeNewFolderName) : parent;
+  const root = await getRootRealPath();
+  const rootWithSeparator = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  const lowerTarget = target.toLowerCase();
+  const lowerRoot = root.toLowerCase();
+  const lowerRootWithSeparator = rootWithSeparator.toLowerCase();
+
+  if (lowerTarget !== lowerRoot && !lowerTarget.startsWith(lowerRootWithSeparator)) {
+    throw new Error('Upload path escapes media root.');
+  }
+
+  await mkdir(target, { recursive: true });
+  return target;
+}
+
+async function uniqueWritablePath(folderPath, fileName) {
+  const extension = path.extname(fileName);
+  const stem = path.basename(fileName, extension);
+
+  for (let index = 0; index < 1000; index += 1) {
+    const candidateName = index === 0 ? fileName : `${stem}-${index}${extension}`;
+    const candidate = path.join(folderPath, candidateName);
+    try {
+      await access(candidate, constants.F_OK);
+    } catch {
+      return { path: candidate, name: candidateName };
+    }
+  }
+
+  throw new Error('Could not choose a unique upload filename.');
 }
 
 function toRelativeUrlPath(rootPath, absolutePath) {
@@ -496,6 +569,109 @@ async function streamFile(request, response, relativePath, asDownload) {
   createReadStream(filePath, { start, end: safeEnd }).pipe(response);
 }
 
+async function handleUpload(request, response, requestUrl) {
+  const suppliedPassword = request.headers['x-upload-password'];
+  if (!UPLOAD_PASSWORD) {
+    sendError(response, 503, 'Upload password is not configured.');
+    return;
+  }
+
+  if (!uploadPasswordMatches(Array.isArray(suppliedPassword) ? suppliedPassword[0] : suppliedPassword)) {
+    sendError(response, 401, 'Invalid upload password.');
+    return;
+  }
+
+  const status = await getStatus();
+  if (!status.diskSerialMatches || !status.mediaRootPresent) {
+    sendError(response, 409, 'Upload target drive is not ready.');
+    return;
+  }
+
+  const uploadFolder = await resolveWritableFolder(
+    requestUrl.searchParams.get('folder') || '',
+    requestUrl.searchParams.get('newFolder') || ''
+  );
+  const uploaded = [];
+  const pendingWrites = [];
+  let uploadError = null;
+
+  const busboy = Busboy({
+    headers: request.headers,
+    limits: {
+      files: 100,
+      fileSize: MAX_UPLOAD_BYTES
+    }
+  });
+
+  const completion = new Promise((resolve, reject) => {
+    busboy.on('file', (fieldName, file, info) => {
+      const safeFileName = sanitizeFileName(info.filename || '');
+      const type = isMediaFile(safeFileName);
+
+      if (!type) {
+        uploadError = new Error('Only photo and video files can be uploaded.');
+        file.resume();
+        return;
+      }
+
+      file.pause();
+      const writeTask = (async () => {
+        const finalTarget = await uniqueWritablePath(uploadFolder, safeFileName);
+        const temporaryPath = `${finalTarget.path}.${Date.now()}.uploading`;
+        const writer = createWriteStream(temporaryPath, { flags: 'wx' });
+
+        await new Promise((resolveWrite, rejectWrite) => {
+          file.on('limit', () => {
+            rejectWrite(new Error('Uploaded file is too large.'));
+          });
+          file.on('error', rejectWrite);
+          writer.on('error', rejectWrite);
+          writer.on('finish', resolveWrite);
+          file.pipe(writer);
+          file.resume();
+        });
+
+        await rename(temporaryPath, finalTarget.path);
+        const fileStat = await stat(finalTarget.path);
+        const root = await getRootRealPath();
+        uploaded.push(mediaDescriptor(finalTarget.name, toRelativeUrlPath(root, finalTarget.path), type, fileStat));
+      })().catch((error) => {
+        uploadError = error;
+        file.resume();
+      });
+
+      pendingWrites.push(writeTask);
+    });
+
+    busboy.on('filesLimit', () => {
+      uploadError = new Error('Too many files in one upload.');
+    });
+    busboy.on('error', reject);
+    busboy.on('close', async () => {
+      try {
+        await Promise.all(pendingWrites);
+        if (uploadError) {
+          reject(uploadError);
+          return;
+        }
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+
+  request.pipe(busboy);
+  await completion;
+
+  if (!uploaded.length) {
+    sendError(response, 400, 'No upload files were received.');
+    return;
+  }
+
+  sendJson(response, 200, { ok: true, uploaded, count: uploaded.length });
+}
+
 async function serveStatic(request, response, requestUrl) {
   let pathname = decodeURIComponent(requestUrl.pathname);
   if (pathname === '/') pathname = '/index.html';
@@ -548,6 +724,21 @@ async function handleApi(request, response, requestUrl) {
     writeCors(response);
     response.writeHead(204);
     response.end();
+    return;
+  }
+
+  if (requestUrl.pathname === '/api/upload') {
+    if (request.method !== 'POST') {
+      sendError(response, 405, 'Method not allowed.');
+      return;
+    }
+
+    try {
+      await handleUpload(request, response, requestUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Upload failed.';
+      sendError(response, 400, 'Upload failed.', message);
+    }
     return;
   }
 
