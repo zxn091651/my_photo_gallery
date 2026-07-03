@@ -28,7 +28,6 @@ if (Test-Path $envFile) {
 if (-not $env:PORT) { $env:PORT = '8787' }
 if (-not $env:HOST) { $env:HOST = '0.0.0.0' }
 if (-not $env:GALLERY_DRIVE) { $env:GALLERY_DRIVE = 'F' }
-if (-not $env:GALLERY_VOLUME) { $env:GALLERY_VOLUME = 'WD_BLACK' }
 
 $logDir = Join-Path $ProjectRoot 'logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null

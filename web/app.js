@@ -97,11 +97,10 @@ function setStatus(status) {
     return;
   }
 
-  const volume = status.volumeName ? `，卷标 ${status.volumeName}` : '';
-  const isHealthy = Boolean(status.drivePresent && status.mediaRootPresent && status.volumeMatches);
+  const isHealthy = Boolean(status.diskSerialMatches && status.mediaRootPresent);
   const detail = isHealthy
-    ? `正常工作：${status.driveLetter}: 盘已连接${volume}。`
-    : `异常：电脑在线，但硬盘或影像备份目录未就绪。`;
+    ? `正常工作：已检测到指定移动硬盘序列号。`
+    : `异常：未检测到指定移动硬盘序列号，或影像备份目录未就绪。`;
   setConnectionStatus(isHealthy, detail);
 }
 

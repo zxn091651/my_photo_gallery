@@ -135,7 +135,7 @@ cloudflared tunnel --url http://localhost:8787
 
 ## API
 
-- `GET /api/status`：检测电脑后端、F 盘、卷标和媒体根目录状态。
+- `GET /api/status`：检测电脑后端、移动硬盘序列号和媒体根目录状态。
 - `GET /api/folders`：递归列出 `影像备份` 下的所有文件夹。
 - `GET /api/media?folder=相对路径`：列出某个文件夹下的子文件夹、照片和视频。
 - `GET /api/file?path=相对路径`：预览照片/视频，支持视频 Range 请求。
