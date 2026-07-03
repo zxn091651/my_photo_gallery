@@ -43,7 +43,7 @@ const elements = {
 
 elements.apiInput.value = state.apiBase;
 elements.apiInput.placeholder = isHostedFrontend
-  ? 'https://你的-cloudflare-公网地址'
+  ? 'https://你的公网后端地址'
   : window.location.origin;
 elements.tokenInput.value = state.token;
 
@@ -91,7 +91,7 @@ function formatBytes(value) {
 function setStatus(status) {
   if (!status) {
     elements.statusText.textContent = isHostedFrontend
-      ? '请填写 Cloudflare 公网后端地址，并确认电脑、图库后端和 Cloudflare Tunnel 都已运行。'
+      ? '请填写公网后端地址，并确认电脑、图库后端和内网穿透隧道都已运行。'
       : '无法连接后端。请确认电脑已开机，并已运行 npm run start。';
     elements.statusText.className = 'error';
     return;
@@ -268,7 +268,7 @@ async function refreshAll() {
     const message = error instanceof Error ? error.message : '';
     if (message) {
       elements.statusText.textContent = message === 'Failed to fetch'
-        ? '无法连接后端。请确认电脑已开机，后端或 Cloudflare Tunnel 已运行。'
+        ? '无法连接后端。请确认电脑已开机，后端和内网穿透隧道已运行。'
         : message;
       elements.statusText.className = 'error';
     } else {
