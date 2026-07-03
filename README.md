@@ -66,6 +66,18 @@ window.GALLERY_CONFIG = {
 
 如果把 token 写进 `web/config.js`，任何能打开网页源码的人都能看到它；更建议只把 token 通过私下链接发给可信的人。
 
+部署在 GitHub Pages 上的前端不会再默认连接 `http://127.0.0.1:8787`。给别人访问时，前端必须使用 Cloudflare Tunnel 的公网 HTTPS 地址，例如：
+
+```text
+https://zxn091651.github.io/my_photo_gallery/?api=https%3A%2F%2Fphotos.example.com&token=你的访问令牌
+```
+
+访问链路是：
+
+```text
+GitHub Pages 前端 -> Cloudflare 公网地址 -> 你的电脑 cloudflared -> http://localhost:8787 -> F:\影像备份
+```
+
 ## 开机自启动
 
 安装图库后端开机自启动：

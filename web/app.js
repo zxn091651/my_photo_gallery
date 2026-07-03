@@ -3,10 +3,19 @@ const API_STORAGE_KEY = 'photo-gallery-api-base';
 const TOKEN_STORAGE_KEY = 'photo-gallery-token';
 const queryParams = new URLSearchParams(window.location.search);
 const isHostedFrontend = window.location.hostname.endsWith('github.io');
-const DEFAULT_API_BASE = CONFIG.apiBase || (isHostedFrontend ? 'http://127.0.0.1:8787' : window.location.origin);
+const configuredApiBase = String(CONFIG.apiBase || '').trim().replace(/\/+$/, '');
+const queryApiBase = String(queryParams.get('api') || '').trim().replace(/\/+$/, '');
+const storedApiBase = String(localStorage.getItem(API_STORAGE_KEY) || '').trim().replace(/\/+$/, '');
+
+function isLocalBackendUrl(value) {
+  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?/i.test(value);
+}
+
+const safeStoredApiBase = isHostedFrontend && isLocalBackendUrl(storedApiBase) ? '' : storedApiBase;
+const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 
 const state = {
-  apiBase: queryParams.get('api') || localStorage.getItem(API_STORAGE_KEY) || DEFAULT_API_BASE,
+  apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
   token: queryParams.get('token') || localStorage.getItem(TOKEN_STORAGE_KEY) || CONFIG.token || '',
   folders: [],
   currentFolder: ''
@@ -33,9 +42,16 @@ const elements = {
 };
 
 elements.apiInput.value = state.apiBase;
+elements.apiInput.placeholder = isHostedFrontend
+  ? 'https://你的-cloudflare-公网地址'
+  : window.location.origin;
 elements.tokenInput.value = state.token;
 
 function apiUrl(path, params = {}) {
+  if (!state.apiBase) {
+    throw new Error('请先填写 Cloudflare 公网后端地址。');
+  }
+
   const url = new URL(path, state.apiBase);
   if (state.token) {
     url.searchParams.set('token', state.token);
@@ -74,7 +90,9 @@ function formatBytes(value) {
 
 function setStatus(status) {
   if (!status) {
-    elements.statusText.textContent = '无法连接本机后端。请确认电脑已开机，并已运行 npm run start。';
+    elements.statusText.textContent = isHostedFrontend
+      ? '请填写 Cloudflare 公网后端地址，并确认电脑、图库后端和 Cloudflare Tunnel 都已运行。'
+      : '无法连接后端。请确认电脑已开机，并已运行 npm run start。';
     elements.statusText.className = 'error';
     return;
   }
@@ -268,7 +286,11 @@ async function refreshAll() {
 elements.saveApiButton.addEventListener('click', () => {
   state.apiBase = elements.apiInput.value.trim().replace(/\/+$/, '') || DEFAULT_API_BASE;
   state.token = elements.tokenInput.value.trim();
-  localStorage.setItem(API_STORAGE_KEY, state.apiBase);
+  if (state.apiBase) {
+    localStorage.setItem(API_STORAGE_KEY, state.apiBase);
+  } else {
+    localStorage.removeItem(API_STORAGE_KEY);
+  }
   localStorage.setItem(TOKEN_STORAGE_KEY, state.token);
   elements.apiInput.value = state.apiBase;
   refreshAll();

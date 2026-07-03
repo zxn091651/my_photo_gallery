@@ -1,6 +1,7 @@
 window.GALLERY_CONFIG = {
-  // Fill this after you create a public tunnel/domain, for example:
-  // apiBase: "https://your-gallery-domain.example.com",
+  // Fill this with your Cloudflare Tunnel public URL, for example:
+  // apiBase: "https://photos.example.com",
+  // apiBase: "https://your-gallery.trycloudflare.com",
   apiBase: "",
 
   // Leave empty here if you prefer sharing links like:
