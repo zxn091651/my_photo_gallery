@@ -346,9 +346,13 @@ function currentMediaFile() {
   return state.mediaFiles[state.activeMediaIndex] || null;
 }
 
+function wrappedMediaIndex(index) {
+  if (!state.mediaFiles.length) return 0;
+  return ((index % state.mediaFiles.length) + state.mediaFiles.length) % state.mediaFiles.length;
+}
+
 function setActiveMediaIndex(index) {
-  const maxIndex = Math.max(0, state.mediaFiles.length - 1);
-  state.activeMediaIndex = Math.min(Math.max(index, 0), maxIndex);
+  state.activeMediaIndex = wrappedMediaIndex(index);
   renderMediaDeck();
 }
 
@@ -416,17 +420,17 @@ function createDeckCard(file, absoluteIndex, options = {}) {
 function setPreviousPeekPosition(card, deltaX, animate = false) {
   if (!card) return;
   const progress = Math.min(Math.max(deltaX / 180, 0), 1);
-  const offset = Math.max(window.innerWidth - deltaX * 1.18, 0);
+  const offset = Math.min(-window.innerWidth + deltaX * 1.18, 0);
   card.style.transition = animate ? 'transform 180ms ease, opacity 180ms ease' : 'none';
   card.style.opacity = String(Math.min(1, 0.18 + progress * 0.82));
-  card.style.transform = `translate(${offset}px, ${24 - progress * 24}px) rotate(${18 - progress * 18}deg)`;
+  card.style.transform = `translate(${offset}px, ${24 - progress * 24}px) rotate(${-18 + progress * 18}deg)`;
 }
 
 function removePreviousPeek(card) {
   if (!card) return;
   card.style.transition = 'transform 160ms ease, opacity 160ms ease';
   card.style.opacity = '0';
-  card.style.transform = `translate(${window.innerWidth}px, 24px) rotate(18deg)`;
+  card.style.transform = `translate(${-window.innerWidth}px, 24px) rotate(-18deg)`;
   setTimeout(() => card.remove(), 170);
 }
 
@@ -442,8 +446,8 @@ function attachSwipeHandlers(card) {
     card.classList.add('dragging');
     card.setPointerCapture(event.pointerId);
 
-    if (state.activeMediaIndex > 0 && card.parentElement) {
-      const previousIndex = state.activeMediaIndex - 1;
+    if (state.mediaFiles.length > 1 && card.parentElement) {
+      const previousIndex = wrappedMediaIndex(state.activeMediaIndex - 1);
       const previousCard = createDeckCard(state.mediaFiles[previousIndex], previousIndex, {
         extraClass: 'previous-peek',
         isPriority: true,
@@ -452,6 +456,7 @@ function attachSwipeHandlers(card) {
       setPreviousPeekPosition(previousCard, 0);
       card.parentElement.append(previousCard);
       state.drag.previousCard = previousCard;
+      state.drag.previousIndex = previousIndex;
       card.style.zIndex = '11';
     }
   });
@@ -475,6 +480,7 @@ function attachSwipeHandlers(card) {
     const deltaX = event.clientX - state.drag.startX;
     const moved = state.drag.moved;
     const previousCard = state.drag.previousCard;
+    const previousIndex = state.drag.previousIndex;
     state.drag = null;
     card.classList.remove('dragging');
 
@@ -486,7 +492,7 @@ function attachSwipeHandlers(card) {
         return;
       }
 
-      if (state.activeMediaIndex <= 0) {
+      if (previousIndex === undefined) {
         removePreviousPeek(previousCard);
         card.style.transform = '';
         card.style.opacity = '';
@@ -501,7 +507,7 @@ function attachSwipeHandlers(card) {
       setPreviousPeekPosition(previousCard, window.innerWidth, true);
       setTimeout(() => {
         if (previousCard) previousCard.remove();
-        state.activeMediaIndex -= 1;
+        state.activeMediaIndex = previousIndex;
         renderMediaDeck();
       }, 180);
       return;

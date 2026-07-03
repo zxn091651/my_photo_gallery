@@ -486,7 +486,7 @@ h2 {
 .deck-card.previous-peek {
   pointer-events: none;
   opacity: 0;
-  transform: translateX(100vw);
+  transform: translateX(-100vw);
 }
 
 .deck-preview {
