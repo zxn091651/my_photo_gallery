@@ -1,8 +1,9 @@
 const CONFIG = window.GALLERY_CONFIG || {};
-const DEFAULT_API_BASE = CONFIG.apiBase || 'http://127.0.0.1:8787';
 const API_STORAGE_KEY = 'photo-gallery-api-base';
 const TOKEN_STORAGE_KEY = 'photo-gallery-token';
 const queryParams = new URLSearchParams(window.location.search);
+const isHostedFrontend = window.location.hostname.endsWith('github.io');
+const DEFAULT_API_BASE = CONFIG.apiBase || (isHostedFrontend ? 'http://127.0.0.1:8787' : window.location.origin);
 
 const state = {
   apiBase: queryParams.get('api') || localStorage.getItem(API_STORAGE_KEY) || DEFAULT_API_BASE,
