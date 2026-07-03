@@ -66,6 +66,62 @@ window.GALLERY_CONFIG = {
 
 如果把 token 写进 `web/config.js`，任何能打开网页源码的人都能看到它；更建议只把 token 通过私下链接发给可信的人。
 
+## 开机自启动
+
+安装图库后端开机自启动：
+
+```powershell
+npm run startup:install
+```
+
+这个命令会：
+
+- 创建本地 `.env` 配置文件，默认包含一个随机 `GALLERY_TOKEN`。
+- 注册 Windows 任务计划程序任务 `MyPhotoGalleryBackend`。
+- 在当前用户登录 Windows 时自动运行 `scripts/start-gallery.ps1`。
+- 立即启动一次图库后端。
+
+查看本地配置：
+
+```powershell
+Get-Content .env
+```
+
+卸载开机自启动：
+
+```powershell
+npm run startup:uninstall
+```
+
+日志文件在：
+
+```text
+logs\gallery-startup.log
+logs\gallery-server.log
+```
+
+## Cloudflare 开机自启动
+
+Cloudflare Tunnel 推荐安装成 Windows 服务。先确保你已经安装 `cloudflared`，并且你有一个托管在 Cloudflare 的域名。
+
+然后运行：
+
+```powershell
+.\scripts\install-cloudflared-service.ps1 -PublicHostname photos.example.com
+```
+
+它会创建命名 Tunnel、绑定 DNS，并安装 `cloudflared` Windows 服务。安装完成后，电脑开机时 Cloudflare 隧道会自动连接到：
+
+```text
+http://localhost:8787
+```
+
+如果你还没有自己的域名，可以先临时测试：
+
+```powershell
+cloudflared tunnel --url http://localhost:8787
+```
+
 ## API
 
 - `GET /api/status`：检测电脑后端、F 盘、卷标和媒体根目录状态。
