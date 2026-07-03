@@ -38,7 +38,7 @@ if (-not (Test-Path $envFile)) {
 
 $scriptPath = Join-Path $ProjectRoot 'scripts\start-gallery.ps1'
 $powershellPath = (Get-Command powershell.exe).Source
-$arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+$arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
 
 $action = New-ScheduledTaskAction -Execute $powershellPath -Argument $arguments -WorkingDirectory $ProjectRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -46,6 +46,7 @@ $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" 
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `
+  -Hidden `
   -ExecutionTimeLimit (New-TimeSpan -Days 365) `
   -MultipleInstances IgnoreNew `
   -RestartCount 3 `
