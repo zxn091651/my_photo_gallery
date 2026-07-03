@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>zxn's Photo Gallery</title>
-    <link rel="stylesheet" href="./styles.css?v=20260704-9" />
+    <link rel="stylesheet" href="./styles.css?v=20260704-10" />
   </head>
   <body>
     <main class="shell">
@@ -26,7 +26,6 @@
               <p id="mediaCount">等待加载照片和视频</p>
             </div>
             <div class="header-actions">
-              <button id="uploadButton" type="button">上传</button>
               <button id="rootButton" type="button">根目录</button>
             </div>
           </div>
@@ -54,7 +53,7 @@
         </div>
         <label>
           <span>目标文件夹</span>
-          <input id="uploadFolderInput" name="folder" type="text" autocomplete="off" />
+          <select id="uploadFolderSelect" name="folder"></select>
         </label>
         <label>
           <span>新建文件夹</span>
@@ -73,7 +72,7 @@
       </form>
     </dialog>
 
-    <script src="./config.js?v=20260704-9"></script>
-    <script type="module" src="./app.js?v=20260704-9"></script>
+    <script src="./config.js?v=20260704-10"></script>
+    <script type="module" src="./app.js?v=20260704-10"></script>
   </body>
 </html>

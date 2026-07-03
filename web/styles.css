@@ -249,6 +249,7 @@ h2 {
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   align-items: stretch;
   justify-content: center;
   padding: 16px;
@@ -307,6 +308,17 @@ h2 {
   background:
     linear-gradient(135deg, rgba(102, 217, 255, 0.26), rgba(185, 167, 255, 0.18)),
     rgba(255, 255, 255, 0.08);
+}
+
+.upload-card {
+  border-color: rgba(255, 111, 145, 0.36);
+  background:
+    linear-gradient(135deg, rgba(255, 111, 145, 0.28), rgba(124, 244, 200, 0.14)),
+    rgba(255, 255, 255, 0.08);
+}
+
+.upload-card span {
+  color: #ffd0dc;
 }
 
 .deck-shell {
@@ -524,7 +536,8 @@ h2 {
   font-size: 13px;
 }
 
-.upload-dialog input {
+.upload-dialog input,
+.upload-dialog select {
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--line);
@@ -533,6 +546,15 @@ h2 {
   color: var(--ink);
   padding: 0 12px;
   font: inherit;
+}
+
+.upload-dialog select {
+  appearance: none;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%) right 17px center / 7px 7px no-repeat,
+    linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.06)),
+    rgba(255, 255, 255, 0.08);
+  padding-right: 36px;
 }
 
 .upload-dialog input[type="file"] {

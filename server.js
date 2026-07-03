@@ -220,7 +220,7 @@ function mediaDescriptor(entryName, relativePath, type, fileStat) {
     size: fileStat.size,
     modifiedAt: fileStat.mtime.toISOString(),
     viewUrl: `/api/file?path=${encodeURIComponent(relativePath)}`,
-    thumbUrl: type === 'image' ? `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=960` : undefined,
+    thumbUrl: type === 'image' ? `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=480` : undefined,
     downloadUrl: `/api/download?path=${encodeURIComponent(relativePath)}`
   };
 }
@@ -336,6 +336,44 @@ async function listFolders(folderPath = '') {
   return folders;
 }
 
+async function listUploadFolders() {
+  const root = await getRootRealPath();
+  const folders = [{ name: path.basename(root) || '影像备份', path: '', depth: 0 }];
+  const stack = [{ absolutePath: root, depth: 0 }];
+  const maxFolders = 5000;
+
+  while (stack.length && folders.length < maxFolders) {
+    const current = stack.pop();
+    let entries = [];
+
+    try {
+      entries = await readdir(current.absolutePath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    const childDirectories = entries
+      .filter((entry) => entry.isDirectory())
+      .sort((a, b) => b.name.localeCompare(a.name, 'zh-Hans-CN'));
+
+    for (const entry of childDirectories) {
+      const absolutePath = path.join(current.absolutePath, entry.name);
+      const relativePath = toRelativeUrlPath(root, absolutePath);
+      folders.push({
+        name: entry.name,
+        path: relativePath,
+        depth: current.depth + 1
+      });
+
+      if (folders.length >= maxFolders) break;
+      stack.push({ absolutePath, depth: current.depth + 1 });
+    }
+  }
+
+  folders.sort((a, b) => a.path.localeCompare(b.path, 'zh-Hans-CN'));
+  return folders;
+}
+
 async function listMedia(folderPath) {
   const root = await getRootRealPath();
   const folder = await resolveInsideMediaRoot(folderPath);
@@ -441,9 +479,9 @@ async function randomPhotos(limitValue) {
 }
 
 function thumbnailWidth(value) {
-  const width = Number(value || 960);
-  if (!Number.isFinite(width)) return 960;
-  return Math.min(Math.max(Math.round(width), 240), 1600);
+  const width = Number(value || 480);
+  if (!Number.isFinite(width)) return 480;
+  return Math.min(Math.max(Math.round(width), 180), 960);
 }
 
 function thumbnailCachePath(relativePath, fileStat, width) {
@@ -482,7 +520,7 @@ async function streamThumbnail(request, response, relativePath, widthValue) {
           fit: 'inside',
           withoutEnlargement: true
         })
-        .webp({ quality: 62, effort: 4 })
+        .webp({ quality: 46, effort: 2 })
         .toFile(cachePath);
     } catch {
       await streamFile(request, response, relativePath, false);
@@ -761,6 +799,16 @@ async function handleApi(request, response, requestUrl) {
         return;
       }
       sendJson(response, 200, { ok: true, folder, folders: await listFolders(folder), status });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/upload-folders') {
+      const status = await getStatus();
+      if (!status.mediaRootPresent) {
+        sendJson(response, 200, { ok: true, folders: [], status });
+        return;
+      }
+      sendJson(response, 200, { ok: true, folders: await listUploadFolders(), status });
       return;
     }
 

@@ -17,6 +17,7 @@ const isHttpsPage = window.location.protocol === 'https:';
 const state = {
   apiBase: queryApiBase || configuredApiBase || safeStoredApiBase || DEFAULT_API_BASE,
   folders: [],
+  uploadFolders: [],
   currentFolder: '',
   isRandomMode: false,
   mediaFiles: [],
@@ -26,7 +27,6 @@ const state = {
 
 const elements = {
   statusText: document.querySelector('#statusText'),
-  uploadButton: document.querySelector('#uploadButton'),
   rootButton: document.querySelector('#rootButton'),
   currentFolder: document.querySelector('#currentFolder'),
   mediaCount: document.querySelector('#mediaCount'),
@@ -39,7 +39,7 @@ const elements = {
   uploadDialog: document.querySelector('#uploadDialog'),
   uploadForm: document.querySelector('#uploadForm'),
   closeUploadButton: document.querySelector('#closeUploadButton'),
-  uploadFolderInput: document.querySelector('#uploadFolderInput'),
+  uploadFolderSelect: document.querySelector('#uploadFolderSelect'),
   newFolderInput: document.querySelector('#newFolderInput'),
   uploadPasswordInput: document.querySelector('#uploadPasswordInput'),
   uploadFilesInput: document.querySelector('#uploadFilesInput'),
@@ -76,7 +76,7 @@ async function requestJson(path, params) {
 async function uploadFiles() {
   const files = Array.from(elements.uploadFilesInput.files || []);
   const password = elements.uploadPasswordInput.value;
-  const folder = elements.uploadFolderInput.value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  const folder = elements.uploadFolderSelect.value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
   const newFolder = elements.newFolderInput.value.trim();
 
   if (!files.length) {
@@ -196,27 +196,44 @@ function createRandomButton() {
   return button;
 }
 
+function createUploadButton() {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'folder-card upload-card';
+  button.title = '选择文件夹并上传照片或视频';
+
+  const name = document.createElement('strong');
+  name.textContent = '上传';
+
+  const meta = document.createElement('span');
+  meta.textContent = '需要密码';
+
+  button.append(name, meta);
+  button.addEventListener('click', openUploadDialog);
+  return button;
+}
+
 function renderFolderGallery(folders) {
   elements.mediaGrid.replaceChildren();
-
-  if (!folders.length) {
-    const empty = document.createElement('p');
-    empty.className = 'empty';
-    empty.textContent = '这里暂时没有可显示的照片、视频或文件夹。';
-    elements.mediaGrid.append(empty);
-    return;
-  }
 
   const gallery = document.createElement('section');
   gallery.className = 'folder-gallery';
   gallery.setAttribute('aria-label', '文件夹');
   gallery.append(createRandomButton());
+  gallery.append(createUploadButton());
 
   for (const folder of folders) {
     gallery.append(createFolderButton(folder));
   }
 
   elements.mediaGrid.append(gallery);
+
+  if (!folders.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = '这里暂时没有可显示的照片、视频或文件夹。';
+    elements.mediaGrid.append(empty);
+  }
 }
 
 function renderMedia(files, folders) {
@@ -245,16 +262,17 @@ function navigateMedia(direction) {
   setActiveMediaIndex(state.activeMediaIndex + direction);
 }
 
-function createMediaElement(file, isTopCard) {
+function createMediaElement(file, isPriority) {
   const source = apiUrl(file.thumbUrl || file.viewUrl).toString();
 
   if (file.type === 'image') {
     const image = document.createElement('img');
     image.className = 'deck-media';
-    image.loading = isTopCard ? 'eager' : 'lazy';
+    image.loading = isPriority ? 'eager' : 'lazy';
     image.alt = file.name;
     image.src = source;
     image.decoding = 'async';
+    image.fetchPriority = isPriority ? 'high' : 'low';
     return image;
   }
 
@@ -322,11 +340,16 @@ function attachSwipeHandlers(card) {
 }
 
 function preloadUpcomingThumbnails() {
-  const upcomingFiles = state.mediaFiles.slice(state.activeMediaIndex + 1, state.activeMediaIndex + 3);
-  for (const file of upcomingFiles) {
+  const preloadFiles = [
+    ...state.mediaFiles.slice(Math.max(0, state.activeMediaIndex - 3), state.activeMediaIndex),
+    ...state.mediaFiles.slice(state.activeMediaIndex + 1, state.activeMediaIndex + 8)
+  ];
+
+  for (const file of preloadFiles) {
     if (file.type !== 'image' || !file.thumbUrl) continue;
     const image = new Image();
     image.decoding = 'async';
+    image.fetchPriority = 'low';
     image.src = apiUrl(file.thumbUrl).toString();
   }
 }
@@ -365,7 +388,7 @@ function renderMediaDeck() {
 
     const preview = document.createElement('div');
     preview.className = 'deck-preview';
-    preview.append(createMediaElement(file, isTopCard));
+    preview.append(createMediaElement(file, indexFromTop <= 1));
 
     const label = document.createElement('div');
     label.className = 'deck-label';
@@ -486,16 +509,60 @@ function openViewer(file) {
   elements.viewerDialog.showModal();
 }
 
-function openUploadDialog() {
-  elements.uploadFolderInput.value = state.isRandomMode ? '' : state.currentFolder;
+function folderOptionLabel(folder) {
+  if (!folder.path) return '影像备份';
+  return folder.path;
+}
+
+function populateUploadFolders(selectedPath = '') {
+  elements.uploadFolderSelect.replaceChildren();
+  const folders = state.uploadFolders.length
+    ? state.uploadFolders
+    : [{ name: '影像备份', path: '', depth: 0 }];
+
+  for (const folder of folders) {
+    const option = document.createElement('option');
+    option.value = folder.path;
+    option.textContent = folderOptionLabel(folder);
+    option.selected = folder.path === selectedPath;
+    elements.uploadFolderSelect.append(option);
+  }
+
+  if (selectedPath && elements.uploadFolderSelect.value !== selectedPath) {
+    const option = document.createElement('option');
+    option.value = selectedPath;
+    option.textContent = selectedPath;
+    option.selected = true;
+    elements.uploadFolderSelect.prepend(option);
+  }
+}
+
+async function loadUploadFolders(selectedPath = '') {
+  elements.uploadStatus.textContent = '正在读取可上传的文件夹...';
+
+  try {
+    const data = await requestJson('/api/upload-folders');
+    state.uploadFolders = data.folders || [];
+    setStatus(data.status);
+    populateUploadFolders(selectedPath);
+    elements.uploadStatus.textContent = '';
+  } catch (error) {
+    populateUploadFolders(selectedPath);
+    elements.uploadStatus.textContent = '文件夹列表读取失败，已保留当前文件夹作为上传目标。';
+  }
+}
+
+async function openUploadDialog() {
+  const selectedPath = state.isRandomMode ? '' : state.currentFolder;
+  populateUploadFolders(selectedPath);
   elements.newFolderInput.value = '';
   elements.uploadPasswordInput.value = '';
   elements.uploadFilesInput.value = '';
   elements.uploadStatus.textContent = '';
   elements.uploadDialog.showModal();
+  await loadUploadFolders(selectedPath);
 }
 
-elements.uploadButton.addEventListener('click', openUploadDialog);
 elements.rootButton.addEventListener('click', () => openFolder(''));
 elements.closeUploadButton.addEventListener('click', () => {
   elements.uploadDialog.close();
