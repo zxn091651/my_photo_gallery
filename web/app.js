@@ -114,7 +114,7 @@ function renderFolders() {
   if (!state.folders.length) {
     const empty = document.createElement('p');
     empty.className = 'empty';
-    empty.textContent = '没有找到子文件夹。';
+    empty.textContent = '当前目录下没有子文件夹。';
     elements.folderList.append(empty);
     return;
   }
@@ -123,7 +123,6 @@ function renderFolders() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `folder-item${folder.path === state.currentFolder ? ' active' : ''}`;
-    button.style.paddingLeft = `${12 + Math.min(folder.depth, 8) * 14}px`;
     button.textContent = folder.name;
     button.title = folder.path;
     button.addEventListener('click', () => openFolder(folder.path));
@@ -204,28 +203,32 @@ function renderMedia(files) {
   }
 }
 
-async function loadFolders() {
-  elements.statusText.textContent = '正在扫描文件夹...';
-  const data = await requestJson('/api/folders');
-  setStatus(data.status);
-  state.folders = data.folders || [];
-  renderFolders();
-}
-
 async function openFolder(folderPath = '') {
   state.currentFolder = folderPath;
   elements.currentFolder.textContent = folderPath || '影像备份';
-  elements.mediaCount.textContent = '正在加载媒体...';
-  renderFolders();
+  elements.statusText.textContent = '正在加载目录...';
+  elements.mediaCount.textContent = '正在加载照片和视频...';
 
   try {
     const data = await requestJson('/api/media', { folder: folderPath });
-    renderChildFolders(data.folders || []);
+    setStatus(data.status);
+    state.folders = data.folders || [];
+    renderFolders();
+    renderChildFolders(state.folders);
     renderMedia(data.files || []);
-    elements.mediaCount.textContent = `${data.folders?.length || 0} 个子文件夹，${data.files?.length || 0} 个照片/视频`;
+    elements.mediaCount.textContent = `${state.folders.length} 个子文件夹，${data.files?.length || 0} 个照片/视频`;
   } catch (error) {
-    elements.mediaCount.textContent = '加载失败';
-    elements.mediaGrid.innerHTML = `<p class="error">${error.message}</p>`;
+    const message = error instanceof Error ? error.message : '';
+    elements.statusText.textContent = message === 'Failed to fetch'
+      ? '无法连接后端，或当前目录加载超时。请确认电脑、后端和内网穿透隧道都已运行。'
+      : message || '加载失败。';
+    elements.statusText.className = 'error';
+    state.folders = [];
+    renderFolders();
+    renderChildFolders([]);
+    renderMedia([]);
+    elements.currentFolder.textContent = '无法连接';
+    elements.mediaCount.textContent = '请检查后端地址、隧道和当前目录。';
   }
 }
 
@@ -254,27 +257,8 @@ function openViewer(file) {
   elements.viewerDialog.showModal();
 }
 
-async function refreshAll() {
-  try {
-    await loadFolders();
-    await openFolder(state.currentFolder);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    if (message) {
-      elements.statusText.textContent = message === 'Failed to fetch'
-        ? '无法连接后端。请确认电脑已开机，后端和内网穿透隧道已运行。'
-        : message;
-      elements.statusText.className = 'error';
-    } else {
-      setStatus(null);
-    }
-    state.folders = [];
-    renderFolders();
-    renderChildFolders([]);
-    renderMedia([]);
-    elements.currentFolder.textContent = '无法连接';
-    elements.mediaCount.textContent = '请检查后端地址和本机服务。';
-  }
+function refreshAll() {
+  openFolder(state.currentFolder);
 }
 
 elements.saveApiButton.addEventListener('click', () => {

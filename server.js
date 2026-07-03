@@ -181,33 +181,28 @@ async function getStatus() {
   };
 }
 
-async function listFolders() {
-  const root = await resolveInsideMediaRoot('');
+async function listFolders(folderPath = '') {
+  const root = await getRootRealPath();
+  const folder = await resolveInsideMediaRoot(folderPath);
+  const folderStat = await stat(folder);
+  if (!folderStat.isDirectory()) {
+    throw new Error('The requested path is not a folder.');
+  }
+
   const folders = [];
-  const stack = [{ absolutePath: root, relativePath: '' }];
+  const entries = await readdir(folder, { withFileTypes: true });
+  const childDirectories = entries
+    .filter((entry) => entry.isDirectory())
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
 
-  while (stack.length) {
-    const current = stack.pop();
-    const entries = await readdir(current.absolutePath, { withFileTypes: true });
-    const childDirectories = entries
-      .filter((entry) => entry.isDirectory())
-      .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
-
-    for (const entry of childDirectories) {
-      const absolutePath = path.join(current.absolutePath, entry.name);
-      const relativePath = current.relativePath ? `${current.relativePath}/${entry.name}` : entry.name;
-      folders.push({
-        name: entry.name,
-        path: relativePath,
-        depth: relativePath.split('/').length - 1
-      });
-    }
-
-    for (const entry of childDirectories.toReversed()) {
-      const absolutePath = path.join(current.absolutePath, entry.name);
-      const relativePath = current.relativePath ? `${current.relativePath}/${entry.name}` : entry.name;
-      stack.push({ absolutePath, relativePath });
-    }
+  for (const entry of childDirectories) {
+    const absolutePath = path.join(folder, entry.name);
+    const relativePath = toRelativeUrlPath(root, absolutePath);
+    folders.push({
+      name: entry.name,
+      path: relativePath,
+      depth: relativePath ? relativePath.split('/').length - 1 : 0
+    });
   }
 
   return folders;
@@ -388,18 +383,24 @@ async function handleApi(request, response, requestUrl) {
     }
 
     if (requestUrl.pathname === '/api/folders') {
+      const folder = requestUrl.searchParams.get('folder') || '';
       const status = await getStatus();
       if (!status.mediaRootPresent) {
         sendJson(response, 200, { ok: true, folders: [], status });
         return;
       }
-      sendJson(response, 200, { ok: true, folders: await listFolders(), status });
+      sendJson(response, 200, { ok: true, folder, folders: await listFolders(folder), status });
       return;
     }
 
     if (requestUrl.pathname === '/api/media') {
       const folder = requestUrl.searchParams.get('folder') || '';
-      sendJson(response, 200, { ok: true, folder, ...(await listMedia(folder)) });
+      const status = await getStatus();
+      if (!status.mediaRootPresent) {
+        sendJson(response, 200, { ok: true, folder, folders: [], files: [], status });
+        return;
+      }
+      sendJson(response, 200, { ok: true, folder, status, ...(await listMedia(folder)) });
       return;
     }
 
