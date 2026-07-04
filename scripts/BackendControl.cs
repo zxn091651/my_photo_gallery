@@ -643,9 +643,35 @@ internal sealed class BackendControlForm : Form
 
     private async Task StartFrpcAsync()
     {
-        string selectedConfigPath = GetSelectedTunnelConfigPath();
+        TunnelConfigOption selectedOption = GetSelectedTunnelOption();
+        string selectedConfigPath = selectedOption == null ? GetSelectedTunnelConfigPath() : selectedOption.ConfigPath;
+        string selectedProxyId = selectedOption == null ? ExtractProxyId(selectedConfigPath) : selectedOption.ProxyId;
         await Task.Run(delegate
         {
+            if (selectedProxyId.Length > 0)
+            {
+                if (IsFrpcRunningForProxy(selectedProxyId))
+                {
+                    return;
+                }
+
+                string userToken = selectedOption == null ? ReadChmlFrpUserToken() : selectedOption.UserToken;
+                if (userToken.Length == 0 || config.FrpcPath.Length == 0 || !File.Exists(config.FrpcPath))
+                {
+                    return;
+                }
+
+                ProcessStartInfo proxyStartInfo = new ProcessStartInfo();
+                proxyStartInfo.FileName = config.FrpcPath;
+                proxyStartInfo.Arguments = "-u " + Quote(userToken) + " -p " + Quote(selectedProxyId);
+                proxyStartInfo.WorkingDirectory = Path.GetDirectoryName(config.FrpcPath);
+                proxyStartInfo.CreateNoWindow = true;
+                proxyStartInfo.UseShellExecute = false;
+                proxyStartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+                Process.Start(proxyStartInfo);
+                return;
+            }
+
             if (selectedConfigPath.Length == 0 || !File.Exists(selectedConfigPath))
             {
                 return;
@@ -676,14 +702,18 @@ internal sealed class BackendControlForm : Form
 
     private async Task StopFrpcAsync()
     {
-        string selectedConfigPath = GetSelectedTunnelConfigPath();
+        TunnelConfigOption selectedOption = GetSelectedTunnelOption();
+        string selectedConfigPath = selectedOption == null ? GetSelectedTunnelConfigPath() : selectedOption.ConfigPath;
+        string selectedProxyId = selectedOption == null ? ExtractProxyId(selectedConfigPath) : selectedOption.ProxyId;
         await Task.Run(delegate
         {
             try
             {
                 foreach (FrpcProcessInfo frpc in GetRunningFrpcProcesses())
                 {
-                    if (selectedConfigPath.Length == 0 || !CommandLineUsesConfig(frpc.CommandLine, selectedConfigPath))
+                    bool matchesProxy = selectedProxyId.Length > 0 && CommandLineUsesProxy(frpc.CommandLine, selectedProxyId);
+                    bool matchesConfig = selectedConfigPath.Length > 0 && CommandLineUsesConfig(frpc.CommandLine, selectedConfigPath);
+                    if (!matchesProxy && !matchesConfig)
                     {
                         continue;
                     }
@@ -737,6 +767,29 @@ internal sealed class BackendControlForm : Form
         return selectedText;
     }
 
+    private TunnelConfigOption GetSelectedTunnelOption()
+    {
+        TunnelConfigOption selectedOption = tunnelCombo.SelectedItem as TunnelConfigOption;
+        if (selectedOption != null)
+        {
+            return selectedOption;
+        }
+
+        string selectedText = tunnelCombo.Text == null ? string.Empty : tunnelCombo.Text.Trim().Trim('"');
+        foreach (object item in tunnelCombo.Items)
+        {
+            TunnelConfigOption option = item as TunnelConfigOption;
+            if (option != null && (string.Equals(option.DisplayName, selectedText, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(option.ConfigPath, selectedText, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(option.ToString(), selectedText, StringComparison.OrdinalIgnoreCase)))
+            {
+                return option;
+            }
+        }
+
+        return null;
+    }
+
     private void LoadTunnelOptions()
     {
         string selected = GetSelectedTunnelConfigPath();
@@ -776,20 +829,32 @@ internal sealed class BackendControlForm : Form
 
     private List<TunnelConfigOption> DiscoverTunnelConfigs()
     {
+        return DiscoverTunnelConfigsV2();
+    }
+
+    private List<TunnelConfigOption> DiscoverTunnelConfigsV2()
+    {
         List<TunnelConfigOption> options = new List<TunnelConfigOption>();
         string appDataConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "net.chmlfrp.launcher");
+        string userToken = ReadChmlFrpUserToken();
 
         AddTunnelOption(options, config.FrpcConfigPath, "已保存的隧道", false, false);
+
+        AddLauncherProxyOptions(options, appDataConfigDir, userToken);
 
         foreach (FrpcProcessInfo frpc in GetRunningFrpcProcesses())
         {
             AddTunnelOption(options, ExtractFrpcConfigPath(frpc.CommandLine), "当前运行隧道", true, true);
         }
 
-        AddRunningLauncherTunnelIds(options, appDataConfigDir);
         AddConfigFiles(options, appDataConfigDir);
         AddConfigFiles(options, Path.Combine(projectRoot, "tunnels"));
         AddConfigFiles(options, projectRoot);
+
+        options.RemoveAll(delegate(TunnelConfigOption option)
+        {
+            return option.ProxyId.Length == 0 && !File.Exists(option.ConfigPath);
+        });
 
         return options;
     }
@@ -869,6 +934,285 @@ internal sealed class BackendControlForm : Form
         }
 
         options.Add(new TunnelConfigOption(BuildTunnelDisplayName(clean, prefix, running), clean, File.Exists(clean), running));
+    }
+
+    private static void AddLauncherProxyOptions(List<TunnelConfigOption> options, string appDataConfigDir, string userToken)
+    {
+        if (string.IsNullOrWhiteSpace(appDataConfigDir) || !Directory.Exists(appDataConfigDir))
+        {
+            return;
+        }
+
+        List<string> ids = new List<string>();
+        AddTunnelIdsFromJson(ids, Path.Combine(appDataConfigDir, "tunnel_auto_start.json"));
+        AddTunnelIdsFromJson(ids, Path.Combine(appDataConfigDir, "running_tunnels.json"));
+
+        Dictionary<string, string> namesById = ReadChmlFrpTunnelNamesById();
+        List<string> recentNames = ReadRecentChmlFrpTunnelNames();
+
+        for (int index = 0; index < ids.Count; index++)
+        {
+            string id = ids[index];
+            string name = namesById.ContainsKey(id) ? namesById[id] : string.Empty;
+            if (name.Length == 0)
+            {
+                name = PickRecentTunnelName(recentNames, index, ids.Count);
+            }
+            AddProxyTunnelOption(options, id, name, userToken, IsFrpcRunningForProxyStatic(id));
+        }
+    }
+
+    private static void AddTunnelIdsFromJson(List<string> ids, string jsonPath)
+    {
+        if (!File.Exists(jsonPath))
+        {
+            return;
+        }
+
+        try
+        {
+            string text = File.ReadAllText(jsonPath, Encoding.UTF8);
+            MatchCollection matches = Regex.Matches(text, "\"(?:api_)?(?<id>\\d+)\"\\s*:", RegexOptions.IgnoreCase);
+            foreach (Match match in matches)
+            {
+                string id = match.Groups["id"].Value;
+                if (!ContainsIgnoreCase(ids, id))
+                {
+                    ids.Add(id);
+                }
+            }
+        }
+        catch {}
+    }
+
+    private static void AddProxyTunnelOption(List<TunnelConfigOption> options, string proxyId, string tunnelName, string userToken, bool running)
+    {
+        string id = Regex.Replace(proxyId ?? string.Empty, "[^0-9]", "");
+        if (id.Length == 0)
+        {
+            return;
+        }
+
+        string key = BuildProxyKey(id);
+        foreach (TunnelConfigOption existing in options)
+        {
+            if (string.Equals(existing.ConfigPath, key, StringComparison.OrdinalIgnoreCase))
+            {
+                if (running)
+                {
+                    existing.MarkRunning();
+                }
+                return;
+            }
+        }
+
+        string cleanName = CleanTunnelName(tunnelName);
+        string displayName = cleanName.Length > 0 ? cleanName + " · " + id : "ChmlFrp " + id;
+        options.Add(new TunnelConfigOption(displayName, key, true, running, id, userToken));
+    }
+
+    private static string PickRecentTunnelName(List<string> names, int index, int idCount)
+    {
+        if (names.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        if (idCount == 2 && names.Count >= 2)
+        {
+            // ChmlFrp's auto-start JSON is stable by id, while WebView autofill tends to keep
+            // the newest visible tunnel names near the front. Reversing keeps the old gallery
+            // tunnel paired with its earlier id when a second tunnel is added.
+            int reversed = idCount - 1 - index;
+            if (reversed >= 0 && reversed < names.Count)
+            {
+                return names[reversed];
+            }
+        }
+
+        return index < names.Count ? names[index] : string.Empty;
+    }
+
+    private static string LookupTunnelName(string proxyId)
+    {
+        Dictionary<string, string> namesById = ReadChmlFrpTunnelNamesById();
+        string id = Regex.Replace(proxyId ?? string.Empty, "[^0-9]", "");
+        return namesById.ContainsKey(id) ? namesById[id] : string.Empty;
+    }
+
+    private static string BuildProxyKey(string proxyId)
+    {
+        return "chmlfrp://proxy/" + Regex.Replace(proxyId ?? string.Empty, "[^0-9]", "");
+    }
+
+    private static bool ContainsIgnoreCase(List<string> values, string value)
+    {
+        foreach (string existing in values)
+        {
+            if (string.Equals(existing, value, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static string CleanTunnelName(string value)
+    {
+        string clean = Regex.Replace(value ?? string.Empty, "[^A-Za-z0-9_.-]", "").Trim();
+        string compact = clean.ToLowerInvariant();
+        for (int length = 3; length <= clean.Length / 2; length++)
+        {
+            string first = compact.Substring(0, length);
+            string second = compact.Substring(length, length);
+            if (first == second)
+            {
+                clean = clean.Substring(0, length);
+                break;
+            }
+        }
+
+        if (clean.Length > 64)
+        {
+            clean = clean.Substring(0, 64);
+        }
+        return clean;
+    }
+
+    private static string ReadChmlFrpUserToken()
+    {
+        string compact = ReadChmlFrpLocalStorageCompactText();
+        MatchCollection matches = Regex.Matches(compact, "usertoken\\\":\\\"(?<token>[A-Za-z0-9_-]{16,100})", RegexOptions.IgnoreCase);
+        return matches.Count == 0 ? string.Empty : matches[matches.Count - 1].Groups["token"].Value;
+    }
+
+    private static Dictionary<string, string> ReadChmlFrpTunnelNamesById()
+    {
+        Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string compact = ReadChmlFrpLocalStorageCompactText();
+        MatchCollection objects = Regex.Matches(compact, "\\{[^{}]{0,1200}?\\}", RegexOptions.IgnoreCase);
+        foreach (Match item in objects)
+        {
+            string text = item.Value;
+            Match idMatch = Regex.Match(text, "(?:tunnel_id|tunnelId|id)\\\":\\\"?(?:api_)?(?<id>\\d+)", RegexOptions.IgnoreCase);
+            Match nameMatch = Regex.Match(text, "(?:tunnel_name|tunnelName|name)\\\":\\\"(?<name>[A-Za-z0-9_.-]{1,80})", RegexOptions.IgnoreCase);
+            if (idMatch.Success && nameMatch.Success)
+            {
+                result[idMatch.Groups["id"].Value] = CleanTunnelName(nameMatch.Groups["name"].Value);
+            }
+        }
+        return result;
+    }
+
+    private static List<string> ReadRecentChmlFrpTunnelNames()
+    {
+        List<string> names = new List<string>();
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string webDataPath = Path.Combine(localAppData, @"net.chmlfrp.launcher\EBWebView\Default\Web Data");
+        AddTunnelNamesFromBinaryFile(names, webDataPath);
+
+        string compact = ReadChmlFrpLocalStorageCompactText();
+        MatchCollection matches = Regex.Matches(compact, "tunnelName(?<name>[A-Za-z0-9_.-]{1,80})", RegexOptions.IgnoreCase);
+        foreach (Match match in matches)
+        {
+            AddUniqueTunnelName(names, match.Groups["name"].Value);
+        }
+
+        return names;
+    }
+
+    private static void AddTunnelNamesFromBinaryFile(List<string> names, string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            byte[] bytes = ReadSharedFileBytes(path, 4 * 1024 * 1024);
+            string text = Encoding.UTF8.GetString(bytes);
+            MatchCollection matches = Regex.Matches(text, "tunnelName(?<name>[A-Za-z0-9_.-]{1,80})", RegexOptions.IgnoreCase);
+            foreach (Match match in matches)
+            {
+                AddUniqueTunnelName(names, match.Groups["name"].Value);
+            }
+        }
+        catch {}
+    }
+
+    private static void AddUniqueTunnelName(List<string> names, string value)
+    {
+        string clean = CleanTunnelName(value);
+        if (clean.Length == 0)
+        {
+            return;
+        }
+
+        string lower = clean.ToLowerInvariant();
+        if (lower == "tunnelname" || lower == "domain" || lower == "localip")
+        {
+            return;
+        }
+
+        foreach (string existing in names)
+        {
+            if (string.Equals(existing, clean, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+        names.Add(clean);
+    }
+
+    private static string ReadChmlFrpLocalStorageCompactText()
+    {
+        try
+        {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string levelDbDir = Path.Combine(localAppData, @"net.chmlfrp.launcher\EBWebView\Default\Local Storage\leveldb");
+            if (!Directory.Exists(levelDbDir))
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder();
+            foreach (string file in Directory.GetFiles(levelDbDir))
+            {
+                if (string.Equals(Path.GetFileName(file), "LOCK", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                byte[] bytes = ReadSharedFileBytes(file, 2 * 1024 * 1024);
+                builder.Append(Encoding.UTF8.GetString(bytes));
+                builder.Append(Encoding.Unicode.GetString(bytes));
+            }
+
+            return Regex.Replace(builder.ToString(), "[\\x00\\s]", "");
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static byte[] ReadSharedFileBytes(string path, int maxBytes)
+    {
+        using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            int length = (int)Math.Min(stream.Length, maxBytes);
+            byte[] bytes = new byte[length];
+            int read = stream.Read(bytes, 0, length);
+            if (read == bytes.Length)
+            {
+                return bytes;
+            }
+
+            byte[] trimmed = new byte[read];
+            Array.Copy(bytes, trimmed, read);
+            return trimmed;
+        }
     }
 
     private static string BuildTunnelDisplayName(string pathValue, string prefix, bool running)
@@ -1080,16 +1424,46 @@ internal sealed class BackendControlForm : Form
         return false;
     }
 
+    private bool IsFrpcRunningForProxy(string proxyId)
+    {
+        return IsFrpcRunningForProxyStatic(proxyId);
+    }
+
+    private static bool IsFrpcRunningForProxyStatic(string proxyId)
+    {
+        foreach (FrpcProcessInfo frpc in GetRunningFrpcProcesses())
+        {
+            if (CommandLineUsesProxy(frpc.CommandLine, proxyId))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private bool IsSelectedFrpcRunning()
     {
-        string selectedConfigPath = GetSelectedTunnelConfigPath();
-        return selectedConfigPath.Length > 0 && IsFrpcRunningForConfig(selectedConfigPath);
+        TunnelConfigOption option = GetSelectedTunnelOption();
+        string selected = option == null ? GetSelectedTunnelConfigPath() : option.ConfigPath;
+        string proxyId = option == null ? ExtractProxyId(selected) : option.ProxyId;
+        if (proxyId.Length > 0)
+        {
+            return IsFrpcRunningForProxy(proxyId);
+        }
+
+        return selected.Length > 0 && IsFrpcRunningForConfig(selected);
     }
 
     private static bool CommandLineUsesConfig(string commandLine, string configPath)
     {
         string activeConfig = ExtractFrpcConfigPath(commandLine);
         return activeConfig.Length > 0 && string.Equals(NormalizePath(activeConfig), NormalizePath(configPath), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool CommandLineUsesProxy(string commandLine, string proxyId)
+    {
+        string activeProxyId = ExtractProxyId(commandLine);
+        return activeProxyId.Length > 0 && string.Equals(activeProxyId, Regex.Replace(proxyId ?? string.Empty, "[^0-9]", ""), StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ExtractFrpcConfigPath(string commandLine)
@@ -1106,6 +1480,29 @@ internal sealed class BackendControlForm : Form
         }
 
         return match.Groups[1].Value.Trim().Trim('"');
+    }
+
+    private static string ExtractProxyId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        Match keyMatch = Regex.Match(value, "chmlfrp://proxy/(?<id>\\d+)", RegexOptions.IgnoreCase);
+        if (keyMatch.Success)
+        {
+            return keyMatch.Groups["id"].Value;
+        }
+
+        Match commandMatch = Regex.Match(value, "\\s-(?:p|-id)\\s+(\"(?<id>\\d+)\"|(?<id>\\d+))", RegexOptions.IgnoreCase);
+        if (commandMatch.Success)
+        {
+            return commandMatch.Groups["id"].Value;
+        }
+
+        Match apiMatch = Regex.Match(value, "(?:api_|g_)(?<id>\\d+)", RegexOptions.IgnoreCase);
+        return apiMatch.Success ? apiMatch.Groups["id"].Value : string.Empty;
     }
 
     private static string NormalizePath(string value)
@@ -1365,13 +1762,22 @@ internal sealed class TunnelConfigOption
     public readonly string DisplayName;
     public readonly string ConfigPath;
     public readonly bool Exists;
+    public readonly string ProxyId;
+    public readonly string UserToken;
     private bool isRunning;
 
     public TunnelConfigOption(string displayName, string configPath, bool exists, bool running)
+        : this(displayName, configPath, exists, running, string.Empty, string.Empty)
+    {
+    }
+
+    public TunnelConfigOption(string displayName, string configPath, bool exists, bool running, string proxyId, string userToken)
     {
         DisplayName = displayName ?? "";
         ConfigPath = configPath ?? "";
         Exists = exists;
+        ProxyId = proxyId ?? "";
+        UserToken = userToken ?? "";
         isRunning = running;
     }
 
