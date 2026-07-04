@@ -120,6 +120,10 @@ internal sealed class BackendControlForm : Form
             StatusKind.Working,
             StatusKind.Working,
             StatusKind.Working,
+            StatusKind.Working,
+            StatusKind.Working,
+            StatusKind.Working,
+            StatusKind.Working,
             "正在检测前端、隧道、后端和硬盘链路。"
         );
         layout.Controls.Add(chainView, 0, 2);
@@ -234,7 +238,16 @@ internal sealed class BackendControlForm : Form
     {
         SetBusy(true, "正在检测移动硬盘", "未插入或序列号不匹配时不会启动后端。");
         DriveCheckResult drive = await CheckDriveAsync();
-        chainView.SetState(StatusKind.Working, StatusKind.Working, drive.Ready ? StatusKind.Good : StatusKind.Bad, drive.Summary);
+        chainView.SetState(
+            StatusKind.Working,
+            StatusKind.Working,
+            StatusKind.Working,
+            drive.Ready ? StatusKind.Good : StatusKind.Bad,
+            StatusKind.Working,
+            StatusKind.Working,
+            StatusKind.Working,
+            drive.Summary
+        );
 
         if (!drive.Ready)
         {
@@ -328,6 +341,11 @@ internal sealed class BackendControlForm : Form
 
     private void UpdateChainView(DriveCheckResult drive, ConnectionResult backend, ConnectionResult publicChain, bool restartedTunnel)
     {
+        bool tunnelRunning = IsSelectedFrpcRunning();
+        StatusKind frontendNode = string.IsNullOrWhiteSpace(config.PublicStatusUrl) ? StatusKind.Warning : StatusKind.Good;
+        StatusKind tunnelNode = tunnelRunning ? StatusKind.Good : StatusKind.Bad;
+        StatusKind backendNode = backend.Ok ? StatusKind.Good : StatusKind.Bad;
+        StatusKind driveNode = drive.Ready ? StatusKind.Good : StatusKind.Bad;
         StatusKind frontendToTunnel = publicChain.Ok ? StatusKind.Good : StatusKind.Bad;
         StatusKind tunnelToBackend = publicChain.Ok && backend.Ok ? StatusKind.Good : StatusKind.Bad;
         StatusKind backendToDrive = backend.Ok && drive.Ready ? StatusKind.Good : StatusKind.Bad;
@@ -352,7 +370,7 @@ internal sealed class BackendControlForm : Form
             detail = drive.Summary;
         }
 
-        chainView.SetState(frontendToTunnel, tunnelToBackend, backendToDrive, detail);
+        chainView.SetState(frontendNode, tunnelNode, backendNode, driveNode, frontendToTunnel, tunnelToBackend, backendToDrive, detail);
     }
 
     private async Task<DriveCheckResult> CheckDriveAsync()
@@ -677,7 +695,7 @@ internal sealed class BackendControlForm : Form
             AddTunnelOption(options, ExtractFrpcConfigPath(frpc.CommandLine), "当前运行隧道", true);
         }
 
-        AddLauncherTunnelIds(options, appDataConfigDir);
+        AddRunningLauncherTunnelIds(options, appDataConfigDir);
         AddConfigFiles(options, appDataConfigDir);
         AddConfigFiles(options, Path.Combine(projectRoot, "tunnels"));
         AddConfigFiles(options, projectRoot);
@@ -702,7 +720,7 @@ internal sealed class BackendControlForm : Form
         catch {}
     }
 
-    private static void AddLauncherTunnelIds(List<TunnelConfigOption> options, string appDataConfigDir)
+    private static void AddRunningLauncherTunnelIds(List<TunnelConfigOption> options, string appDataConfigDir)
     {
         if (string.IsNullOrWhiteSpace(appDataConfigDir) || !Directory.Exists(appDataConfigDir))
         {
@@ -710,7 +728,6 @@ internal sealed class BackendControlForm : Form
         }
 
         AddTunnelIdsFromJson(options, Path.Combine(appDataConfigDir, "running_tunnels.json"), appDataConfigDir, "当前运行隧道");
-        AddTunnelIdsFromJson(options, Path.Combine(appDataConfigDir, "tunnel_auto_start.json"), appDataConfigDir, "隧道");
     }
 
     private static void AddTunnelIdsFromJson(List<TunnelConfigOption> options, string jsonPath, string appDataConfigDir, string prefix)
@@ -923,6 +940,12 @@ internal sealed class BackendControlForm : Form
             }
         }
         return false;
+    }
+
+    private bool IsSelectedFrpcRunning()
+    {
+        string selectedConfigPath = GetSelectedTunnelConfigPath();
+        return selectedConfigPath.Length > 0 && IsFrpcRunningForConfig(selectedConfigPath);
     }
 
     private static bool CommandLineUsesConfig(string commandLine, string configPath)
@@ -1363,6 +1386,10 @@ internal sealed class StatusPill : Control
 
 internal sealed class ChainView : Control
 {
+    private StatusKind frontendNode = StatusKind.Working;
+    private StatusKind tunnelNode = StatusKind.Working;
+    private StatusKind backendNode = StatusKind.Working;
+    private StatusKind driveNode = StatusKind.Working;
     private StatusKind frontendToTunnel = StatusKind.Working;
     private StatusKind tunnelToBackend = StatusKind.Working;
     private StatusKind backendToDrive = StatusKind.Working;
@@ -1391,8 +1418,20 @@ internal sealed class ChainView : Control
         }
     }
 
-    public void SetState(StatusKind frontendTunnel, StatusKind tunnelBackend, StatusKind backendDrive, string detailText)
+    public void SetState(
+        StatusKind frontend,
+        StatusKind tunnel,
+        StatusKind backend,
+        StatusKind drive,
+        StatusKind frontendTunnel,
+        StatusKind tunnelBackend,
+        StatusKind backendDrive,
+        string detailText)
     {
+        frontendNode = frontend;
+        tunnelNode = tunnel;
+        backendNode = backend;
+        driveNode = drive;
         frontendToTunnel = frontendTunnel;
         tunnelToBackend = tunnelBackend;
         backendToDrive = backendDrive;
@@ -1425,10 +1464,10 @@ internal sealed class ChainView : Control
         string[] nodeNames = new[] { "前端", "隧道", "后端", "硬盘" };
         StatusKind[] nodeKinds = new[]
         {
-            frontendToTunnel,
-            Merge(frontendToTunnel, tunnelToBackend),
-            Merge(tunnelToBackend, backendToDrive),
-            backendToDrive
+            frontendNode,
+            tunnelNode,
+            backendNode,
+            driveNode
         };
 
         Point[] centers = new Point[4];
@@ -1447,14 +1486,6 @@ internal sealed class ChainView : Control
             DrawNode(e.Graphics, centers[i], nodeSize, nodeNames[i], nodeKinds[i]);
         }
 
-    }
-
-    private static StatusKind Merge(StatusKind left, StatusKind right)
-    {
-        if (left == StatusKind.Bad || right == StatusKind.Bad) return StatusKind.Bad;
-        if (left == StatusKind.Warning || right == StatusKind.Warning) return StatusKind.Warning;
-        if (left == StatusKind.Working || right == StatusKind.Working) return StatusKind.Working;
-        return StatusKind.Good;
     }
 
     private void DrawSegment(Graphics graphics, Point start, Point end, StatusKind kind, string label)
