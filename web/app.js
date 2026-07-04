@@ -454,24 +454,33 @@ function navigateToPreviousMedia() {
   setActiveMediaIndex(state.activeMediaIndex - 1);
 }
 
-function createMediaElement(file, isPriority) {
-  if (file.type === 'image') {
-    const source = apiUrl(file.thumbUrl || file.viewUrl).toString();
-    const image = document.createElement('img');
-    image.className = 'deck-media';
-    image.loading = isPriority ? 'eager' : 'lazy';
-    image.alt = file.name;
-    image.src = source;
-    image.decoding = 'async';
-    image.fetchPriority = isPriority ? 'high' : 'low';
-    return image;
-  }
-
+function createVideoPlaceholder(file) {
   const placeholder = document.createElement('div');
   placeholder.className = 'deck-media video-placeholder';
   placeholder.setAttribute('aria-label', file.name);
   placeholder.innerHTML = '<span>视频</span>';
   return placeholder;
+}
+
+function createMediaElement(file, isPriority) {
+  if (file.type === 'image' || file.thumbUrl) {
+    const source = apiUrl(file.thumbUrl || file.viewUrl).toString();
+    const image = document.createElement('img');
+    image.className = `deck-media${file.type === 'video' ? ' video-poster' : ''}`;
+    image.loading = isPriority ? 'eager' : 'lazy';
+    image.alt = file.name;
+    image.src = source;
+    image.decoding = 'async';
+    image.fetchPriority = isPriority ? 'high' : 'low';
+    if (file.type === 'video') {
+      image.addEventListener('error', () => {
+        image.replaceWith(createVideoPlaceholder(file));
+      }, { once: true });
+    }
+    return image;
+  }
+
+  return createVideoPlaceholder(file);
 }
 
 function mediaTypeLabel(file) {
@@ -692,7 +701,7 @@ function preloadUpcomingThumbnails() {
   }
 
   for (const file of preloadFiles) {
-    if (file.type !== 'image' || !file.thumbUrl) continue;
+    if (!file.thumbUrl) continue;
     const image = new Image();
     image.decoding = 'async';
     image.fetchPriority = 'low';

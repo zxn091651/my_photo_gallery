@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { stat, readdir, realpath, access, mkdir, rename } from 'node:fs/promises';
+import { stat, readdir, realpath, access, mkdir, rename, unlink } from 'node:fs/promises';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import sharp from 'sharp';
 import Busboy from 'busboy';
+import ffmpegPath from 'ffmpeg-static';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -243,7 +244,7 @@ function mediaDescriptor(entryName, relativePath, type, fileStat) {
     size: fileStat.size,
     modifiedAt: fileStat.mtime.toISOString(),
     viewUrl: `/api/file?path=${encodeURIComponent(relativePath)}`,
-    thumbUrl: type === 'image' ? `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=480` : undefined,
+    thumbUrl: `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=480`,
     downloadUrl: `/api/download?path=${encodeURIComponent(relativePath)}`
   };
 }
@@ -536,46 +537,113 @@ function thumbnailWidth(value) {
   return Math.min(Math.max(Math.round(width), 180), 960);
 }
 
-function thumbnailCachePath(relativePath, fileStat, width) {
+function thumbnailCachePath(relativePath, fileStat, width, type) {
   const key = JSON.stringify({
     relativePath,
     size: fileStat.size,
     mtimeMs: Math.round(fileStat.mtimeMs),
-    width
+    width,
+    type
   });
   const hash = createHash('sha256').update(key).digest('hex');
   return path.join(THUMB_CACHE_ROOT, `${hash}.webp`);
 }
 
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    if (!ffmpegPath) {
+      reject(new Error('ffmpeg is not available.'));
+      return;
+    }
+
+    const child = spawn(ffmpegPath, args, { windowsHide: true });
+    let errorOutput = '';
+
+    child.stderr.on('data', (data) => {
+      errorOutput += data.toString('utf8');
+    });
+
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(errorOutput.trim() || `ffmpeg exited with code ${code}`));
+    });
+  });
+}
+
+async function createVideoThumbnail(filePath, cachePath, width) {
+  const temporaryFramePath = `${cachePath}.${process.pid}.${Date.now()}.jpg`;
+
+  try {
+    await runFfmpeg([
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-ss',
+      '0',
+      '-i',
+      filePath,
+      '-frames:v',
+      '1',
+      '-vf',
+      `scale=${width}:-2:force_original_aspect_ratio=decrease`,
+      '-q:v',
+      '5',
+      temporaryFramePath
+    ]);
+
+    await sharp(temporaryFramePath, { failOn: 'none' })
+      .resize({
+        width,
+        height: Math.round(width * 1.45),
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .webp({ quality: 46, effort: 2 })
+      .toFile(cachePath);
+  } finally {
+    await unlink(temporaryFramePath).catch(() => {});
+  }
+}
+
 async function streamThumbnail(request, response, relativePath, widthValue) {
   const filePath = await resolveInsideMediaRoot(relativePath);
   const fileStat = await stat(filePath);
+  const mediaType = isMediaFile(path.basename(filePath));
 
-  if (!fileStat.isFile() || isMediaFile(path.basename(filePath)) !== 'image') {
-    sendError(response, 404, 'Image not found.');
+  if (!fileStat.isFile() || !mediaType) {
+    sendError(response, 404, 'Media not found.');
     return;
   }
 
   const width = thumbnailWidth(widthValue);
-  const cachePath = thumbnailCachePath(relativePath, fileStat, width);
+  const cachePath = thumbnailCachePath(relativePath, fileStat, width, mediaType);
 
   try {
     await access(cachePath, constants.F_OK);
   } catch {
     await mkdir(THUMB_CACHE_ROOT, { recursive: true });
     try {
-      await sharp(filePath, { failOn: 'none', pages: 1 })
-        .rotate()
-        .resize({
-          width,
-          height: Math.round(width * 1.45),
-          fit: 'inside',
-          withoutEnlargement: true
-        })
-        .webp({ quality: 46, effort: 2 })
-        .toFile(cachePath);
+      if (mediaType === 'image') {
+        await sharp(filePath, { failOn: 'none', pages: 1 })
+          .rotate()
+          .resize({
+            width,
+            height: Math.round(width * 1.45),
+            fit: 'inside',
+            withoutEnlargement: true
+          })
+          .webp({ quality: 46, effort: 2 })
+          .toFile(cachePath);
+      } else {
+        await createVideoThumbnail(filePath, cachePath, width);
+      }
     } catch {
-      await streamFile(request, response, relativePath, false);
+      sendError(response, 422, 'Thumbnail could not be generated.');
       return;
     }
   }
