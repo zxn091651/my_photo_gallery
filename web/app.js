@@ -93,6 +93,11 @@ async function uploadFiles() {
     return;
   }
 
+  if (!folder) {
+    elements.uploadStatus.textContent = '请选择影像备份下的子文件夹作为上传目标。';
+    return;
+  }
+
   elements.submitUploadButton.disabled = true;
   elements.uploadStatus.textContent = '正在上传...';
 
@@ -847,15 +852,12 @@ function openViewer(file) {
 }
 
 function folderOptionLabel(folder) {
-  if (!folder.path) return '影像备份';
   return folder.path;
 }
 
 function populateUploadFolders(selectedPath = '') {
   elements.uploadFolderSelect.replaceChildren();
-  const folders = state.uploadFolders.length
-    ? state.uploadFolders
-    : [{ name: '影像备份', path: '', depth: 0 }];
+  const folders = state.uploadFolders.filter((folder) => folder.path);
 
   for (const folder of folders) {
     const option = document.createElement('option');
@@ -865,12 +867,21 @@ function populateUploadFolders(selectedPath = '') {
     elements.uploadFolderSelect.append(option);
   }
 
-  if (selectedPath && elements.uploadFolderSelect.value !== selectedPath) {
+  if (selectedPath && folders.some((folder) => folder.path === selectedPath) && elements.uploadFolderSelect.value !== selectedPath) {
     const option = document.createElement('option');
     option.value = selectedPath;
     option.textContent = selectedPath;
     option.selected = true;
     elements.uploadFolderSelect.prepend(option);
+  }
+
+  if (!folders.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = '没有可上传的子文件夹';
+    option.disabled = true;
+    option.selected = true;
+    elements.uploadFolderSelect.append(option);
   }
 }
 

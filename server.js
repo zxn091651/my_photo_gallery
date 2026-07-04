@@ -338,7 +338,7 @@ async function listFolders(folderPath = '') {
 
 async function listUploadFolders() {
   const root = await getRootRealPath();
-  const folders = [{ name: path.basename(root) || '影像备份', path: '', depth: 0 }];
+  const folders = [];
   const stack = [{ absolutePath: root, depth: 0 }];
   const maxFolders = 5000;
 
