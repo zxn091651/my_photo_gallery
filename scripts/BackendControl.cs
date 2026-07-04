@@ -34,6 +34,7 @@ internal sealed class BackendControlForm : Form
     private readonly ToolTip tunnelToolTip;
     private readonly GlassButton saveTunnelButton;
     private readonly GlassButton refreshTunnelButton;
+    private readonly GlassButton loginChmlFrpButton;
     private readonly GlassButton startButton;
     private readonly GlassButton stopButton;
     private readonly GlassButton checkButton;
@@ -176,6 +177,13 @@ internal sealed class BackendControlForm : Form
         tunnelCombo.SelectedIndexChanged += delegate { UpdateTunnelToolTip(); };
         tunnelCombo.TextChanged += delegate { UpdateTunnelToolTip(); };
 
+        loginChmlFrpButton = new GlassButton("ChmlFrp", false);
+        loginChmlFrpButton.Width = 82;
+        loginChmlFrpButton.Height = 36;
+        loginChmlFrpButton.Location = new Point(tunnelPanel.Width - 254, 8);
+        loginChmlFrpButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        tunnelPanel.Controls.Add(loginChmlFrpButton);
+
         refreshTunnelButton = new GlassButton("刷新", false);
         refreshTunnelButton.Width = 76;
         refreshTunnelButton.Height = 36;
@@ -192,11 +200,13 @@ internal sealed class BackendControlForm : Form
 
         tunnelPanel.Resize += delegate
         {
-            tunnelCombo.Width = Math.Max(160, tunnelPanel.Width - 254);
+            tunnelCombo.Width = Math.Max(150, tunnelPanel.Width - 342);
+            loginChmlFrpButton.Location = new Point(tunnelPanel.Width - 254, 8);
             refreshTunnelButton.Location = new Point(tunnelPanel.Width - 166, 8);
             saveTunnelButton.Location = new Point(tunnelPanel.Width - 82, 8);
         };
 
+        loginChmlFrpButton.Click += async delegate { await LoginChmlFrpAsync(); };
         refreshTunnelButton.Click += delegate { LoadTunnelOptions(); };
         saveTunnelButton.Click += async delegate { await SaveSelectedTunnelConfigAsync(); };
         LoadTunnelOptions();
@@ -338,6 +348,50 @@ internal sealed class BackendControlForm : Form
         await StopFrpcAsync();
         await Task.Delay(700);
         await CheckStatusAsync();
+    }
+
+    private async Task LoginChmlFrpAsync()
+    {
+        SetBusy(true, "正在登录 ChmlFrp", "将打开 ChmlFrp 官方登录页，请在浏览器中完成账号密码登录。");
+        try
+        {
+            ChmlFrpDeviceLogin login = await RequestChmlFrpDeviceLoginAsync();
+            if (login == null || string.IsNullOrWhiteSpace(login.DeviceCode) || string.IsNullOrWhiteSpace(login.VerificationUrl))
+            {
+                overallPill.SetState(StatusKind.Bad, "ChmlFrp 登录失败", "无法获取官方登录地址。");
+                return;
+            }
+
+            OpenUrl(login.VerificationUrl);
+            overallPill.SetState(StatusKind.Working, "请在浏览器中登录 ChmlFrp", "登录完成后控制器会自动获取隧道信息。");
+
+            string accessToken = await PollChmlFrpAccessTokenAsync(login);
+            if (string.IsNullOrWhiteSpace(accessToken))
+            {
+                overallPill.SetState(StatusKind.Bad, "ChmlFrp 登录超时", "请重新点击 ChmlFrp 按钮并完成浏览器登录。");
+                return;
+            }
+
+            string userToken = await ExchangeChmlFrpUserTokenAsync(accessToken);
+            if (string.IsNullOrWhiteSpace(userToken))
+            {
+                overallPill.SetState(StatusKind.Bad, "ChmlFrp 登录失败", "已登录账号系统，但未能换取 ChmlFrp usertoken。");
+                return;
+            }
+
+            SaveEnvValue("CHMLFRP_USER_TOKEN", userToken);
+            SaveSdkChmlFrpUserToken(userToken);
+            LoadTunnelOptions();
+            overallPill.SetState(StatusKind.Good, "ChmlFrp 登录成功", "已获取实时隧道列表，请选择要使用的隧道。");
+        }
+        catch (Exception ex)
+        {
+            overallPill.SetState(StatusKind.Bad, "ChmlFrp 登录失败", ex.Message);
+        }
+        finally
+        {
+            SetBusy(false, null, null);
+        }
     }
 
     private async Task CheckStatusAsync()
@@ -994,6 +1048,112 @@ internal sealed class BackendControlForm : Form
         catch {}
     }
 
+    private static async Task<ChmlFrpDeviceLogin> RequestChmlFrpDeviceLoginAsync()
+    {
+        return await Task.Run(delegate
+        {
+            string body = PostForm(
+                "https://account-api.qzhua.net/oauth2/device_authorization",
+                "client_id=019d4334b34972ca9fd41513e5703dfd&scope=" + Uri.EscapeDataString("profile email offline_access chmlfrp_api"),
+                15000
+            );
+
+            string deviceCode = JsonString(body, "device_code");
+            string verifyUrl = JsonString(body, "verification_uri_complete");
+            if (verifyUrl.Length == 0)
+            {
+                verifyUrl = JsonString(body, "verification_uri");
+            }
+
+            int expiresIn = JsonInt(body, "expires_in", 300);
+            int interval = JsonInt(body, "interval", 5);
+            return new ChmlFrpDeviceLogin(deviceCode, verifyUrl, expiresIn, Math.Max(2, interval));
+        });
+    }
+
+    private static async Task<string> PollChmlFrpAccessTokenAsync(ChmlFrpDeviceLogin login)
+    {
+        DateTime expiresAt = DateTime.Now.AddSeconds(Math.Max(60, login.ExpiresIn));
+        while (DateTime.Now < expiresAt)
+        {
+            await Task.Delay(login.IntervalSeconds * 1000);
+
+            string body = await Task.Run(delegate
+            {
+                return PostForm(
+                    "https://account-api.qzhua.net/oauth2/token",
+                    "grant_type=" + Uri.EscapeDataString("urn:ietf:params:oauth:grant-type:device_code")
+                        + "&device_code=" + Uri.EscapeDataString(login.DeviceCode)
+                        + "&client_id=019d4334b34972ca9fd41513e5703dfd",
+                    15000
+                );
+            });
+
+            string error = JsonString(body, "error");
+            if (string.Equals(error, "authorization_pending", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            if (string.Equals(error, "slow_down", StringComparison.OrdinalIgnoreCase))
+            {
+                await Task.Delay(5000);
+                continue;
+            }
+            if (error.Length > 0)
+            {
+                throw new InvalidOperationException(error);
+            }
+
+            string accessToken = JsonString(body, "access_token");
+            if (accessToken.Length > 0)
+            {
+                return accessToken;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static async Task<string> ExchangeChmlFrpUserTokenAsync(string accessToken)
+    {
+        return await Task.Run(delegate
+        {
+            string body = GetText("https://cf-v2.uapis.cn/login?access_token=" + Uri.EscapeDataString(accessToken), 15000);
+            if (JsonInt(body, "code", 0) != 200 && !Regex.IsMatch(body, "\"state\"\\s*:\\s*(true|\"success\")", RegexOptions.IgnoreCase))
+            {
+                string message = JsonString(body, "msg");
+                if (message.Length > 0)
+                {
+                    throw new InvalidOperationException(message);
+                }
+            }
+
+            string token = JsonString(body, "usertoken");
+            if (token.Length == 0) token = JsonString(body, "userToken");
+            if (token.Length == 0) token = JsonString(body, "token");
+            return token;
+        });
+    }
+
+    private static void SaveSdkChmlFrpUserToken(string userToken)
+    {
+        try
+        {
+            string sdkDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ChmlFrp");
+            Directory.CreateDirectory(sdkDir);
+            File.WriteAllText(Path.Combine(sdkDir, "user.json"), "{\"usertoken\":\"" + userToken.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}", Encoding.UTF8);
+        }
+        catch {}
+    }
+
+    private static void OpenUrl(string url)
+    {
+        ProcessStartInfo startInfo = new ProcessStartInfo();
+        startInfo.FileName = url;
+        startInfo.UseShellExecute = true;
+        Process.Start(startInfo);
+    }
+
     private static List<TunnelConfigOption> FetchChmlFrpApiTunnelOptions(string userToken)
     {
         List<TunnelConfigOption> result = new List<TunnelConfigOption>();
@@ -1353,6 +1513,83 @@ internal sealed class BackendControlForm : Form
             Array.Copy(bytes, trimmed, read);
             return trimmed;
         }
+    }
+
+    private static string GetText(string url, int timeoutMs)
+    {
+        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "GET";
+        request.Timeout = timeoutMs;
+        request.ReadWriteTimeout = timeoutMs;
+        request.UserAgent = "zxn-photo-gallery-control";
+        return ReadHttpResponseText(request);
+    }
+
+    private static string PostForm(string url, string formBody, int timeoutMs)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(formBody);
+        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "POST";
+        request.Timeout = timeoutMs;
+        request.ReadWriteTimeout = timeoutMs;
+        request.UserAgent = "zxn-photo-gallery-control";
+        request.ContentType = "application/x-www-form-urlencoded";
+        request.ContentLength = bytes.Length;
+        using (Stream requestStream = request.GetRequestStream())
+        {
+            requestStream.Write(bytes, 0, bytes.Length);
+        }
+        return ReadHttpResponseText(request);
+    }
+
+    private static string ReadHttpResponseText(HttpWebRequest request)
+    {
+        try
+        {
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (Stream stream = response.GetResponseStream())
+            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                return reader.ReadToEnd();
+            }
+        }
+        catch (WebException ex)
+        {
+            if (ex.Response == null)
+            {
+                throw;
+            }
+
+            using (HttpWebResponse response = (HttpWebResponse)ex.Response)
+            using (Stream stream = response.GetResponseStream())
+            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                return reader.ReadToEnd();
+            }
+        }
+    }
+
+    private static string JsonString(string json, string key)
+    {
+        if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key))
+        {
+            return string.Empty;
+        }
+
+        Match match = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*\"(?<value>(?:\\\\.|[^\"])*)\"", RegexOptions.IgnoreCase);
+        return match.Success ? DecodeJsonString(match.Groups["value"].Value) : string.Empty;
+    }
+
+    private static int JsonInt(string json, string key, int fallback)
+    {
+        if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(key))
+        {
+            return fallback;
+        }
+
+        Match match = Regex.Match(json, "\"" + Regex.Escape(key) + "\"\\s*:\\s*(?<value>\\d+)", RegexOptions.IgnoreCase);
+        int parsed;
+        return match.Success && int.TryParse(match.Groups["value"].Value, out parsed) ? parsed : fallback;
     }
 
     private static string BuildTunnelDisplayName(string pathValue, string prefix, bool running)
@@ -1717,6 +1954,9 @@ internal sealed class BackendControlForm : Form
         startButton.Enabled = !busy;
         stopButton.Enabled = !busy;
         checkButton.Enabled = !busy;
+        loginChmlFrpButton.Enabled = !busy;
+        refreshTunnelButton.Enabled = !busy;
+        saveTunnelButton.Enabled = !busy;
         if (!string.IsNullOrEmpty(title))
         {
             overallPill.SetState(StatusKind.Working, title, detail ?? string.Empty);
@@ -1846,6 +2086,22 @@ internal sealed class GalleryConfig
             ? values["GALLERY_PUBLIC_STATUS_URL"]
             : "http://photo.fucku.top/api/status";
         return new GalleryConfig(port, mediaFolderName, serial, frpcPath, frpcConfigPath, publicStatusUrl);
+    }
+}
+
+internal sealed class ChmlFrpDeviceLogin
+{
+    public readonly string DeviceCode;
+    public readonly string VerificationUrl;
+    public readonly int ExpiresIn;
+    public readonly int IntervalSeconds;
+
+    public ChmlFrpDeviceLogin(string deviceCode, string verificationUrl, int expiresIn, int intervalSeconds)
+    {
+        DeviceCode = deviceCode ?? "";
+        VerificationUrl = verificationUrl ?? "";
+        ExpiresIn = expiresIn;
+        IntervalSeconds = intervalSeconds;
     }
 }
 
