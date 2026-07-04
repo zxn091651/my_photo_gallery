@@ -122,9 +122,15 @@ async function uploadFiles() {
       throw new Error(data.details || data.error || `HTTP ${response.status}`);
     }
 
-    elements.uploadStatus.textContent = `上传完成：${data.count} 个文件。`;
+    const uploadSuccessMessage = `上传完成：${data.count} 个文件。`;
+    elements.uploadStatus.textContent = uploadSuccessMessage;
     elements.uploadPasswordInput.value = '';
     elements.uploadFilesInput.value = '';
+    if (newFolder) {
+      elements.newFolderInput.value = '';
+      await loadUploadFolders(newFolder);
+      elements.uploadStatus.textContent = uploadSuccessMessage;
+    }
     await openFolder(state.currentFolder);
   } catch (error) {
     elements.uploadStatus.textContent = error instanceof Error ? error.message : '上传失败。';
