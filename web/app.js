@@ -35,7 +35,6 @@ const state = {
   heartbeatInFlight: false,
   heartbeatFailures: 0,
   downloadStatusGraceUntil: 0,
-  unsupportedNativeImageExtensions: new Set(),
   drag: null
 };
 
@@ -566,15 +565,6 @@ function createImagePlaceholder(file) {
   return placeholder;
 }
 
-function fileExtension(file) {
-  return String(file.extension || file.name?.match(/\.[^.]+$/)?.[0] || '').toLowerCase();
-}
-
-function canTryNativeImage(file) {
-  const extension = fileExtension(file);
-  return Boolean(file.type === 'image' && file.usesConvertedPreview && file.viewUrl && !state.unsupportedNativeImageExtensions.has(extension));
-}
-
 function createImageElement(file, primaryUrl, fallbackUrl, isPriority, className = 'deck-media') {
   const image = document.createElement('img');
   image.className = className;
@@ -585,10 +575,8 @@ function createImageElement(file, primaryUrl, fallbackUrl, isPriority, className
   image.fetchPriority = isPriority ? 'high' : 'low';
   let didFallback = false;
   image.addEventListener('error', () => {
-    const extension = fileExtension(file);
     if (!didFallback && primaryUrl !== fallbackUrl && file.usesConvertedPreview) {
       didFallback = true;
-      state.unsupportedNativeImageExtensions.add(extension);
       image.src = fallbackUrl;
       return;
     }
@@ -1049,8 +1037,7 @@ function openViewer(file) {
 
   if (file.type === 'image') {
     const fallbackUrl = source;
-    const primaryUrl = canTryNativeImage(file) ? apiUrl(file.viewUrl).toString() : fallbackUrl;
-    const image = createImageElement(file, primaryUrl, fallbackUrl, true, '');
+    const image = createImageElement(file, fallbackUrl, fallbackUrl, true, '');
     elements.viewerStage.append(image);
   } else {
     const video = document.createElement('video');

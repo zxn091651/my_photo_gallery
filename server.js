@@ -94,6 +94,10 @@ let rootRealPathCacheSource = '';
 let diskSerialStatusCache = null;
 let diskSerialStatusCacheAt = 0;
 const DISK_STATUS_CACHE_MS = 30_000;
+const CACHE_WARM_SYNC_COUNT = 1;
+const CACHE_WARM_BACKGROUND_LIMIT = 48;
+let cacheWarmQueue = Promise.resolve();
+const cacheWarmKeys = new Set();
 
 function normalizeDiskSerial(value = '') {
   return String(value).replace(/\s+/g, '').toUpperCase();
@@ -262,6 +266,8 @@ function mediaDescriptor(entryName, relativePath, type, fileStat) {
     viewUrl: `/api/file?path=${encodeURIComponent(relativePath)}`,
     previewUrl: type === 'image' ? `/api/preview?path=${encodeURIComponent(relativePath)}&w=${previewWidthValue}` : undefined,
     thumbUrl: `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=${thumbWidth}`,
+    thumbWidth,
+    previewWidth: previewWidthValue,
     usesConvertedPreview,
     downloadUrl: `/api/download?path=${encodeURIComponent(relativePath)}`
   };
@@ -480,6 +486,7 @@ async function listMedia(folderPath) {
   folders.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
   files.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
 
+  await warmReturnedMedia(files);
   return { folders, files };
 }
 
@@ -546,6 +553,7 @@ async function randomPhotos(limitValue) {
     [sample[index], sample[swapIndex]] = [sample[swapIndex], sample[index]];
   }
 
+  await warmReturnedMedia(sample);
   return { files: sample, totalPhotos: seen };
 }
 
@@ -620,6 +628,67 @@ async function imageSharpSource(filePath) {
   }
 
   return cachePath;
+}
+
+async function createImagePreviewCache(relativePath, filePath, fileStat, width, cacheType, quality) {
+  const cachePath = thumbnailCachePath(relativePath, fileStat, width, cacheType);
+
+  try {
+    await access(cachePath, constants.F_OK);
+    return cachePath;
+  } catch {}
+
+  await mkdir(THUMB_CACHE_ROOT, { recursive: true });
+  await sharp(await imageSharpSource(filePath), { failOn: 'none', pages: 1 })
+    .rotate()
+    .resize({
+      width,
+      height: Math.round(width * 1.45),
+      fit: 'inside',
+      withoutEnlargement: true
+    })
+    .webp({ quality, effort: 1 })
+    .toFile(cachePath);
+  return cachePath;
+}
+
+async function warmSingleImage(file) {
+  if (!file?.usesConvertedPreview || file.type !== 'image') return;
+
+  const filePath = await resolveInsideMediaRoot(file.path);
+  const fileStat = await stat(filePath);
+  if (!fileStat.isFile()) return;
+
+  await createImagePreviewCache(file.path, filePath, fileStat, file.thumbWidth || 320, 'image', 44);
+  await createImagePreviewCache(file.path, filePath, fileStat, file.previewWidth || 1280, 'image-preview', 68);
+}
+
+function enqueueCacheWarm(file) {
+  const key = `${file.path}|${file.modifiedAt}|${file.size}`;
+  if (cacheWarmKeys.has(key)) return;
+  cacheWarmKeys.add(key);
+
+  cacheWarmQueue = cacheWarmQueue
+    .then(() => warmSingleImage(file))
+    .catch(() => {})
+    .finally(() => {
+      cacheWarmKeys.delete(key);
+    });
+}
+
+async function warmReturnedMedia(files) {
+  const heavyImages = (files || []).filter((file) => file.usesConvertedPreview && file.type === 'image');
+  const syncImages = heavyImages.slice(0, CACHE_WARM_SYNC_COUNT);
+
+  for (const file of syncImages) {
+    try {
+      await warmSingleImage(file);
+    } catch {}
+  }
+
+  for (const file of heavyImages.slice(CACHE_WARM_SYNC_COUNT, CACHE_WARM_BACKGROUND_LIMIT)) {
+    enqueueCacheWarm(file);
+  }
 }
 
 function runFfmpeg(args) {
@@ -699,20 +768,11 @@ async function streamThumbnail(request, response, relativePath, widthValue) {
   try {
     await access(cachePath, constants.F_OK);
   } catch {
-    await mkdir(THUMB_CACHE_ROOT, { recursive: true });
     try {
       if (mediaType === 'image') {
-        await sharp(await imageSharpSource(filePath), { failOn: 'none', pages: 1 })
-          .rotate()
-          .resize({
-            width,
-            height: Math.round(width * 1.45),
-            fit: 'inside',
-            withoutEnlargement: true
-          })
-          .webp({ quality: 46, effort: 2 })
-          .toFile(cachePath);
+        await createImagePreviewCache(relativePath, filePath, fileStat, width, mediaType, 44);
       } else {
+        await mkdir(THUMB_CACHE_ROOT, { recursive: true });
         await createVideoThumbnail(filePath, cachePath, width);
       }
     } catch {
@@ -752,18 +812,8 @@ async function streamPreview(request, response, relativePath, widthValue) {
   try {
     await access(cachePath, constants.F_OK);
   } catch {
-    await mkdir(THUMB_CACHE_ROOT, { recursive: true });
     try {
-      await sharp(await imageSharpSource(filePath), { failOn: 'none', pages: 1 })
-        .rotate()
-        .resize({
-          width,
-          height: Math.round(width * 1.45),
-          fit: 'inside',
-          withoutEnlargement: true
-        })
-        .webp({ quality: 78, effort: 2 })
-        .toFile(cachePath);
+      await createImagePreviewCache(relativePath, filePath, fileStat, width, 'image-preview', 68);
     } catch {
       sendError(response, 422, 'Preview could not be generated.');
       return;
