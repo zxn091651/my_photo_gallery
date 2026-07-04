@@ -481,6 +481,29 @@ function mediaTypeLabel(file) {
   return file.type === 'image' ? '照片' : '视频';
 }
 
+function mediaFolderLabel(file) {
+  const relativePath = String(file.path || '').replace(/\\/g, '/');
+  const lastSlash = relativePath.lastIndexOf('/');
+  return lastSlash > 0 ? relativePath.slice(0, lastSlash) : '影像备份';
+}
+
+function createDeckLabel(file, absoluteIndex) {
+  const label = document.createElement('div');
+  label.className = 'deck-label';
+
+  const typeLine = document.createElement('span');
+  typeLine.textContent = `${mediaTypeLabel(file)} · ${absoluteIndex + 1}/${state.mediaFiles.length}`;
+
+  const title = document.createElement('strong');
+  title.textContent = file.name;
+
+  const detail = document.createElement('small');
+  detail.textContent = state.isRandomMode ? `文件夹：${mediaFolderLabel(file)}` : formatBytes(file.size);
+
+  label.append(typeLine, title, detail);
+  return label;
+}
+
 function createDeckCard(file, absoluteIndex, options = {}) {
   const isTopCard = Boolean(options.isTopCard);
   const card = document.createElement('article');
@@ -492,23 +515,7 @@ function createDeckCard(file, absoluteIndex, options = {}) {
   preview.className = 'deck-preview';
   preview.append(createMediaElement(file, Boolean(options.isPriority)));
 
-  const label = document.createElement('div');
-  label.className = 'deck-label';
-  label.innerHTML = `
-    <span>${file.type === 'image' ? '鐓х墖' : '瑙嗛'} 路 ${absoluteIndex + 1}/${state.mediaFiles.length}</span>
-    <strong></strong>
-    <small>${formatBytes(file.size)}</small>
-  `;
-  label.querySelector('strong').textContent = file.name;
-  const typeLine = document.createElement('span');
-  typeLine.textContent = `${mediaTypeLabel(file)} · ${absoluteIndex + 1}/${state.mediaFiles.length}`;
-  const title = document.createElement('strong');
-  title.textContent = file.name;
-  const size = document.createElement('small');
-  size.textContent = formatBytes(file.size);
-  label.replaceChildren(typeLine, title, size);
-
-  card.append(preview, label);
+  card.append(preview, createDeckLabel(file, absoluteIndex));
   return card;
 }
 
@@ -740,16 +747,7 @@ function renderMediaDeck() {
     preview.className = 'deck-preview';
     preview.append(createMediaElement(file, isTopCard));
 
-    const label = document.createElement('div');
-    label.className = 'deck-label';
-    label.innerHTML = `
-      <span>${file.type === 'image' ? '照片' : '视频'} · ${absoluteIndex + 1}/${state.mediaFiles.length}</span>
-      <strong></strong>
-      <small>${formatBytes(file.size)}</small>
-    `;
-    label.querySelector('strong').textContent = file.name;
-
-    card.append(preview, label);
+    card.append(preview, createDeckLabel(file, absoluteIndex));
     deck.append(card);
   });
 

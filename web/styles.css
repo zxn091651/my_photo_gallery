@@ -540,6 +540,10 @@ h2 {
 
 .deck-label span,
 .deck-label small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: rgba(255, 255, 255, 0.72);
   font-size: 13px;
 }
