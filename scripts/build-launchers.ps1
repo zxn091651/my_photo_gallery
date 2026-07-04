@@ -95,6 +95,7 @@ if (-not (Test-Path $csc)) {
   /optimize+ `
   /win32icon:"$iconPath" `
   /out:"$controlExe" `
+  /reference:System.Web.Extensions.dll `
   /reference:System.Windows.Forms.dll `
   /reference:System.Drawing.dll `
   "$sourcePath"

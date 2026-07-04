@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -9,6 +10,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 internal static class BackendControlProgram
@@ -381,9 +383,24 @@ internal sealed class BackendControlForm : Form
                 return;
             }
 
+            ChmlFrpTunnelFetchResult tunnelResult = await FetchChmlFrpApiTunnelOptionsAsync(userToken);
+            if (!tunnelResult.Success)
+            {
+                overallPill.SetState(StatusKind.Bad, "ChmlFrp 登录失败", tunnelResult.Message.Length > 0 ? tunnelResult.Message : "ChmlFrp usertoken 无效，请重新授权。");
+                return;
+            }
+
             SaveEnvValue("CHMLFRP_USER_TOKEN", userToken);
             SaveSdkChmlFrpUserToken(userToken);
             LoadTunnelOptions();
+            if (tunnelResult.Options.Count == 0)
+            {
+                overallPill.SetState(StatusKind.Warning, "ChmlFrp 登录成功", "账号有效，但没有获取到可用隧道。");
+                return;
+            }
+
+            ApplyTunnelOptions(BuildVisibleProxyTunnelOptions(tunnelResult.Options, userToken));
+
             overallPill.SetState(StatusKind.Good, "ChmlFrp 登录成功", "已获取实时隧道列表，请选择要使用的隧道。");
         }
         catch (Exception ex)
@@ -855,6 +872,16 @@ internal sealed class BackendControlForm : Form
         }
 
         List<TunnelConfigOption> options = DiscoverTunnelConfigs();
+        ApplyTunnelOptions(options, selected);
+    }
+
+    private void ApplyTunnelOptions(List<TunnelConfigOption> options)
+    {
+        ApplyTunnelOptions(options, GetSelectedTunnelConfigPath());
+    }
+
+    private void ApplyTunnelOptions(List<TunnelConfigOption> options, string selected)
+    {
         tunnelCombo.Items.Clear();
         int selectedIndex = -1;
         for (int index = 0; index < options.Count; index++)
@@ -1027,6 +1054,16 @@ internal sealed class BackendControlForm : Form
         }
     }
 
+    private static List<TunnelConfigOption> BuildVisibleProxyTunnelOptions(List<TunnelConfigOption> apiOptions, string userToken)
+    {
+        List<TunnelConfigOption> options = new List<TunnelConfigOption>();
+        foreach (TunnelConfigOption option in apiOptions)
+        {
+            AddProxyTunnelOption(options, option.ProxyId, option.DisplayName, userToken, IsFrpcRunningForProxyStatic(option.ProxyId));
+        }
+        return options;
+    }
+
     private static void AddTunnelIdsFromJson(List<string> ids, string jsonPath)
     {
         if (!File.Exists(jsonPath))
@@ -1130,11 +1167,49 @@ internal sealed class BackendControlForm : Form
                 }
             }
 
-            string token = JsonString(body, "usertoken");
-            if (token.Length == 0) token = JsonString(body, "userToken");
-            if (token.Length == 0) token = JsonString(body, "token");
-            return token;
+            List<string> candidates = ExtractChmlFrpUserTokenCandidates(body);
+            foreach (string candidate in candidates)
+            {
+                ChmlFrpTunnelFetchResult result = FetchChmlFrpApiTunnelOptionsDetailed(candidate);
+                if (result.Success)
+                {
+                    return candidate;
+                }
+            }
+
+            return candidates.Count > 0 ? candidates[0] : string.Empty;
         });
+    }
+
+    private static List<string> ExtractChmlFrpUserTokenCandidates(string body)
+    {
+        List<string> candidates = new List<string>();
+        AddTokenCandidate(candidates, JsonString(body, "usertoken"));
+        AddTokenCandidate(candidates, JsonString(body, "userToken"));
+        AddTokenCandidate(candidates, JsonString(body, "user_token"));
+        AddTokenCandidate(candidates, JsonString(body, "apiToken"));
+        AddTokenCandidate(candidates, JsonString(body, "api_token"));
+        AddTokenCandidate(candidates, JsonString(body, "token"));
+        return candidates;
+    }
+
+    private static void AddTokenCandidate(List<string> candidates, string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return;
+        }
+
+        string clean = token.Trim();
+        foreach (string existing in candidates)
+        {
+            if (string.Equals(existing, clean, StringComparison.Ordinal))
+            {
+                return;
+            }
+        }
+
+        candidates.Add(clean);
     }
 
     private static void SaveSdkChmlFrpUserToken(string userToken)
@@ -1158,51 +1233,217 @@ internal sealed class BackendControlForm : Form
 
     private static List<TunnelConfigOption> FetchChmlFrpApiTunnelOptions(string userToken)
     {
-        List<TunnelConfigOption> result = new List<TunnelConfigOption>();
+        return FetchChmlFrpApiTunnelOptionsDetailed(userToken).Options;
+    }
+
+    private static async Task<ChmlFrpTunnelFetchResult> FetchChmlFrpApiTunnelOptionsAsync(string userToken)
+    {
+        return await Task.Run(delegate
+        {
+            return FetchChmlFrpApiTunnelOptionsDetailed(userToken);
+        });
+    }
+
+    private static ChmlFrpTunnelFetchResult FetchChmlFrpApiTunnelOptionsDetailed(string userToken)
+    {
         if (string.IsNullOrWhiteSpace(userToken))
         {
-            return result;
+            return new ChmlFrpTunnelFetchResult(new List<TunnelConfigOption>(), false, "缺少 ChmlFrp usertoken，请重新登录。");
         }
 
         try
         {
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create("https://cf-v2.uapis.cn/tunnel");
             request.Method = "GET";
-            request.Timeout = 8000;
-            request.ReadWriteTimeout = 8000;
+            request.Timeout = 12000;
+            request.ReadWriteTimeout = 12000;
             request.UserAgent = "zxn-photo-gallery-control";
             request.Headers[HttpRequestHeader.Authorization] = userToken;
 
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            using (Stream stream = response.GetResponseStream())
-            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            string body = ReadHttpResponseText(request);
+            return ParseChmlFrpTunnelResponse(body, userToken);
+        }
+        catch (Exception ex)
+        {
+            return new ChmlFrpTunnelFetchResult(new List<TunnelConfigOption>(), false, "无法获取 ChmlFrp 隧道列表：" + ex.Message);
+        }
+    }
+
+    private static ChmlFrpTunnelFetchResult ParseChmlFrpTunnelResponse(string body, string userToken)
+    {
+        int code = JsonInt(body, "code", 0);
+        bool success = code == 200 || Regex.IsMatch(body ?? string.Empty, "\"state\"\\s*:\\s*(true|\"success\")", RegexOptions.IgnoreCase);
+        if (!success)
+        {
+            string message = JsonString(body, "msg");
+            if (message.Length == 0)
             {
-                string body = reader.ReadToEnd();
-                if (!Regex.IsMatch(body, "\"code\"\\s*:\\s*200|\"state\"\\s*:\\s*(true|\"success\")", RegexOptions.IgnoreCase))
+                message = JsonString(body, "message");
+            }
+            if (message.Length == 0)
+            {
+                message = "ChmlFrp 没有接受当前登录状态，请重新授权。";
+            }
+            return new ChmlFrpTunnelFetchResult(new List<TunnelConfigOption>(), false, message);
+        }
+
+        List<TunnelConfigOption> result = ParseChmlFrpTunnelOptionsFromJson(body, userToken);
+        if (result.Count == 0)
+        {
+            result = ParseChmlFrpTunnelOptionsWithRegex(body, userToken);
+        }
+
+        return new ChmlFrpTunnelFetchResult(result, true, string.Empty);
+    }
+
+    private static List<TunnelConfigOption> ParseChmlFrpTunnelOptionsFromJson(string body, string userToken)
+    {
+        List<TunnelConfigOption> result = new List<TunnelConfigOption>();
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return result;
+        }
+
+        try
+        {
+            JavaScriptSerializer serializer = new JavaScriptSerializer();
+            object parsed = serializer.DeserializeObject(body);
+            List<Dictionary<string, object>> dictionaries = new List<Dictionary<string, object>>();
+            CollectTunnelDictionaries(parsed, dictionaries);
+            foreach (Dictionary<string, object> dictionary in dictionaries)
+            {
+                string id = Regex.Replace(JsonDictionaryString(dictionary, "id", "proxy_id", "proxyId"), "[^0-9]", "");
+                if (id.Length == 0)
                 {
-                    return result;
+                    continue;
                 }
 
-                MatchCollection objects = Regex.Matches(body, "\\{[^{}]*\"id\"\\s*:\\s*\\d+[^{}]*\\}", RegexOptions.IgnoreCase);
-                foreach (Match item in objects)
-                {
-                    string text = item.Value;
-                    Match idMatch = Regex.Match(text, "\"id\"\\s*:\\s*(?<id>\\d+)", RegexOptions.IgnoreCase);
-                    Match nameMatch = Regex.Match(text, "\"name\"\\s*:\\s*\"(?<name>(?:\\\\.|[^\"])*)\"", RegexOptions.IgnoreCase);
-                    if (!idMatch.Success)
-                    {
-                        continue;
-                    }
-
-                    string id = idMatch.Groups["id"].Value;
-                    string name = nameMatch.Success ? DecodeJsonString(nameMatch.Groups["name"].Value) : string.Empty;
-                    result.Add(new TunnelConfigOption(CleanTunnelName(name), BuildProxyKey(id), true, false, id, userToken));
-                }
+                string name = JsonDictionaryString(dictionary, "name", "tunnelName", "tunnel_name", "proxyName", "proxy_name", "remark", "remarks");
+                AddParsedTunnelOption(result, id, name, userToken);
             }
         }
         catch {}
 
         return result;
+    }
+
+    private static void CollectTunnelDictionaries(object value, List<Dictionary<string, object>> dictionaries)
+    {
+        Dictionary<string, object> dictionary = value as Dictionary<string, object>;
+        if (dictionary != null)
+        {
+            if (LooksLikeTunnelDictionary(dictionary))
+            {
+                dictionaries.Add(dictionary);
+            }
+
+            foreach (object child in dictionary.Values)
+            {
+                CollectTunnelDictionaries(child, dictionaries);
+            }
+            return;
+        }
+
+        IEnumerable enumerable = value as IEnumerable;
+        if (enumerable == null || value is string)
+        {
+            return;
+        }
+
+        foreach (object child in enumerable)
+        {
+            CollectTunnelDictionaries(child, dictionaries);
+        }
+    }
+
+    private static bool LooksLikeTunnelDictionary(Dictionary<string, object> dictionary)
+    {
+        string id = Regex.Replace(JsonDictionaryString(dictionary, "id", "proxy_id", "proxyId"), "[^0-9]", "");
+        if (id.Length == 0)
+        {
+            return false;
+        }
+
+        if (JsonDictionaryString(dictionary, "name", "tunnelName", "tunnel_name", "proxyName", "proxy_name").Length > 0)
+        {
+            return true;
+        }
+
+        return HasJsonKey(dictionary, "local_ip", "localip", "localPort", "local_port", "remotePort", "remote_port", "node", "type", "protocol");
+    }
+
+    private static string JsonDictionaryString(Dictionary<string, object> dictionary, params string[] keys)
+    {
+        foreach (string key in keys)
+        {
+            foreach (KeyValuePair<string, object> pair in dictionary)
+            {
+                if (!string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase) || pair.Value == null)
+                {
+                    continue;
+                }
+
+                return Convert.ToString(pair.Value).Trim();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool HasJsonKey(Dictionary<string, object> dictionary, params string[] keys)
+    {
+        foreach (string key in keys)
+        {
+            foreach (string existing in dictionary.Keys)
+            {
+                if (string.Equals(existing, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static List<TunnelConfigOption> ParseChmlFrpTunnelOptionsWithRegex(string body, string userToken)
+    {
+        List<TunnelConfigOption> result = new List<TunnelConfigOption>();
+        MatchCollection objects = Regex.Matches(body ?? string.Empty, "\\{[^{}]*\"id\"\\s*:\\s*\\d+[^{}]*\\}", RegexOptions.IgnoreCase);
+        foreach (Match item in objects)
+        {
+            string text = item.Value;
+            Match idMatch = Regex.Match(text, "\"id\"\\s*:\\s*(?<id>\\d+)", RegexOptions.IgnoreCase);
+            Match nameMatch = Regex.Match(text, "\"(?:name|tunnelName|tunnel_name|proxyName|proxy_name)\"\\s*:\\s*\"(?<name>(?:\\\\.|[^\"])*)\"", RegexOptions.IgnoreCase);
+            if (!idMatch.Success)
+            {
+                continue;
+            }
+
+            string id = idMatch.Groups["id"].Value;
+            string name = nameMatch.Success ? DecodeJsonString(nameMatch.Groups["name"].Value) : string.Empty;
+            AddParsedTunnelOption(result, id, name, userToken);
+        }
+        return result;
+    }
+
+    private static void AddParsedTunnelOption(List<TunnelConfigOption> result, string id, string name, string userToken)
+    {
+        string cleanId = Regex.Replace(id ?? string.Empty, "[^0-9]", "");
+        if (cleanId.Length == 0)
+        {
+            return;
+        }
+
+        foreach (TunnelConfigOption existing in result)
+        {
+            if (string.Equals(existing.ProxyId, cleanId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        result.Add(new TunnelConfigOption(CleanTunnelName(name), BuildProxyKey(cleanId), true, false, cleanId, userToken));
     }
 
     private static void AddProxyTunnelOption(List<TunnelConfigOption> options, string proxyId, string tunnelName, string userToken, bool running)
@@ -2104,6 +2345,20 @@ internal sealed class ChmlFrpDeviceLogin
         VerificationUrl = verificationUrl ?? "";
         ExpiresIn = expiresIn;
         IntervalSeconds = intervalSeconds;
+    }
+}
+
+internal sealed class ChmlFrpTunnelFetchResult
+{
+    public readonly List<TunnelConfigOption> Options;
+    public readonly bool Success;
+    public readonly string Message;
+
+    public ChmlFrpTunnelFetchResult(List<TunnelConfigOption> options, bool success, string message)
+    {
+        Options = options ?? new List<TunnelConfigOption>();
+        Success = success;
+        Message = message ?? "";
     }
 }
 
