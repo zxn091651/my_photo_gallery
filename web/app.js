@@ -85,15 +85,17 @@ async function requestJson(path, params) {
 async function uploadFiles() {
   const files = Array.from(elements.uploadFilesInput.files || []);
   const password = elements.uploadPasswordInput.value;
-  const folder = elements.uploadFolderSelect.value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
   const newFolder = elements.newFolderInput.value.trim();
+  const folder = newFolder
+    ? ''
+    : elements.uploadFolderSelect.value.trim().replace(/\\/g, '/').replace(/^\/+/, '');
 
   if (!files.length) {
     elements.uploadStatus.textContent = '请选择要上传的照片或视频。';
     return;
   }
 
-  if (!folder) {
+  if (!newFolder && !folder) {
     elements.uploadStatus.textContent = '请选择影像备份下的子文件夹作为上传目标。';
     return;
   }
@@ -766,7 +768,7 @@ async function openFolder(folderPath = '') {
   elements.currentFolder.textContent = folderTitle(folderPath);
   setConnectionStatus(true, '后端已连接，正在读取影像备份。');
   elements.mediaCount.textContent = '正在读取文件夹...';
-  elements.rootButton.hidden = !folderPath;
+  elements.rootButton.hidden = true;
 
   try {
     const data = await requestJson('/api/media', { folder: folderPath });
@@ -774,6 +776,7 @@ async function openFolder(folderPath = '') {
     state.folders = data.folders || [];
     state.folderPage = 0;
     renderMedia(data.files || [], state.folders);
+    elements.rootButton.hidden = !state.mediaFiles.length;
 
     const mediaText = `${data.files?.length || 0} 个照片/视频`;
     elements.mediaCount.textContent = state.mediaFiles.length
@@ -792,6 +795,7 @@ async function openFolder(folderPath = '') {
     renderFolderGallery([]);
     elements.currentFolder.textContent = '无法连接';
     elements.mediaCount.textContent = '请检查后端和隧道。';
+    elements.rootButton.hidden = true;
   }
 }
 
@@ -801,13 +805,14 @@ async function openRandomMode() {
   elements.currentFolder.textContent = '随机探索';
   setConnectionStatus(true, '后端已连接，正在随机扫描所有子文件夹的照片。');
   elements.mediaCount.textContent = '正在随机抽取照片...';
-  elements.rootButton.hidden = false;
+  elements.rootButton.hidden = true;
 
   try {
     const data = await requestJson('/api/random', { limit: 96 });
     setStatus(data.status);
     state.folders = [];
     renderMedia(data.files || [], []);
+    elements.rootButton.hidden = !state.mediaFiles.length;
     elements.mediaCount.textContent = data.files?.length
       ? `已随机抽取 ${data.files.length} 张照片`
       : '没有找到可随机探索的照片';
@@ -821,6 +826,7 @@ async function openRandomMode() {
     renderFolderGallery(state.folders);
     elements.currentFolder.textContent = '随机探索失败';
     elements.mediaCount.textContent = '请稍后再试。';
+    elements.rootButton.hidden = true;
   }
 }
 
@@ -857,6 +863,7 @@ function folderOptionLabel(folder) {
 
 function populateUploadFolders(selectedPath = '') {
   elements.uploadFolderSelect.replaceChildren();
+  elements.uploadFolderSelect.disabled = Boolean(elements.newFolderInput.value.trim());
   const folders = state.uploadFolders.filter((folder) => folder.path);
 
   for (const folder of folders) {
@@ -878,35 +885,58 @@ function populateUploadFolders(selectedPath = '') {
   if (!folders.length) {
     const option = document.createElement('option');
     option.value = '';
-    option.textContent = '没有可上传的子文件夹';
+    option.textContent = '可新建文件夹后上传';
     option.disabled = true;
     option.selected = true;
     elements.uploadFolderSelect.append(option);
   }
 }
 
+function showUploadFolderLoading() {
+  elements.uploadFolderSelect.replaceChildren();
+  elements.uploadFolderSelect.disabled = true;
+  const option = document.createElement('option');
+  option.value = '';
+  option.textContent = '文件夹加载中';
+  option.selected = true;
+  elements.uploadFolderSelect.append(option);
+}
+
+function syncUploadTargetState() {
+  const creatingFolder = Boolean(elements.newFolderInput.value.trim());
+  elements.uploadFolderSelect.disabled = creatingFolder;
+  if (creatingFolder) {
+    elements.uploadStatus.textContent = '新建文件夹会创建在影像备份下，与其它子文件夹平级。';
+  } else if (elements.uploadStatus.textContent === '新建文件夹会创建在影像备份下，与其它子文件夹平级。') {
+    elements.uploadStatus.textContent = '';
+  }
+}
+
 async function loadUploadFolders(selectedPath = '') {
   elements.uploadStatus.textContent = '正在读取可上传的文件夹...';
+  showUploadFolderLoading();
 
   try {
     const data = await requestJson('/api/upload-folders');
     state.uploadFolders = data.folders || [];
     setStatus(data.status);
     populateUploadFolders(selectedPath);
+    syncUploadTargetState();
     elements.uploadStatus.textContent = '';
   } catch (error) {
     populateUploadFolders(selectedPath);
-    elements.uploadStatus.textContent = '文件夹列表读取失败，已保留当前文件夹作为上传目标。';
+    syncUploadTargetState();
+    elements.uploadStatus.textContent = '文件夹列表读取失败，可填写新建文件夹后上传。';
   }
 }
 
 async function openUploadDialog() {
   const selectedPath = state.isRandomMode ? '' : state.currentFolder;
-  populateUploadFolders(selectedPath);
   elements.newFolderInput.value = '';
   elements.uploadPasswordInput.value = '';
   elements.uploadFilesInput.value = '';
   elements.uploadStatus.textContent = '';
+  populateUploadFolders(selectedPath);
   elements.uploadDialog.showModal();
   await loadUploadFolders(selectedPath);
 }
@@ -919,6 +949,7 @@ elements.uploadForm.addEventListener('submit', (event) => {
   event.preventDefault();
   uploadFiles();
 });
+elements.newFolderInput.addEventListener('input', syncUploadTargetState);
 elements.closeViewerButton.addEventListener('click', () => {
   elements.viewerDialog.close();
   elements.viewerStage.replaceChildren();
