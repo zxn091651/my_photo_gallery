@@ -29,15 +29,14 @@ internal sealed class BackendControlForm : Form
     private readonly GalleryConfig config;
     private readonly string localStatusUrl;
     private readonly StatusPill overallPill;
-    private readonly StatusCard driveCard;
-    private readonly StatusCard backendCard;
-    private readonly StatusCard publicChainCard;
+    private readonly ChainView chainView;
     private readonly GlassButton startButton;
     private readonly GlassButton stopButton;
     private readonly GlassButton checkButton;
     private readonly Timer statusTimer;
     private bool isBusy;
     private bool isChecking;
+    private DateTime lastTunnelRestartAt = DateTime.MinValue;
 
     public BackendControlForm()
     {
@@ -109,22 +108,16 @@ internal sealed class BackendControlForm : Form
         overallPill.SetState(StatusKind.Working, "正在检查状态", "启动前会先确认移动硬盘已插入。");
         layout.Controls.Add(overallPill, 0, 1);
 
-        TableLayoutPanel cards = new TableLayoutPanel();
-        cards.Dock = DockStyle.Fill;
-        cards.BackColor = Color.Transparent;
-        cards.ColumnCount = 1;
-        cards.RowCount = 3;
-        cards.RowStyles.Add(new RowStyle(SizeType.Percent, 33.34F));
-        cards.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
-        cards.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
-        layout.Controls.Add(cards, 0, 2);
-
-        driveCard = new StatusCard("移动硬盘", "正在按序列号检测移动硬盘");
-        backendCard = new StatusCard("本机后端", localStatusUrl);
-        publicChainCard = new StatusCard("前端-隧道-后端", config.PublicStatusUrl);
-        cards.Controls.Add(driveCard, 0, 0);
-        cards.Controls.Add(backendCard, 0, 1);
-        cards.Controls.Add(publicChainCard, 0, 2);
+        chainView = new ChainView();
+        chainView.Dock = DockStyle.Fill;
+        chainView.Margin = new Padding(0, 0, 0, 12);
+        chainView.SetState(
+            StatusKind.Working,
+            StatusKind.Working,
+            StatusKind.Working,
+            "正在检测前端、隧道、后端和硬盘链路。"
+        );
+        layout.Controls.Add(chainView, 0, 2);
 
         FlowLayoutPanel actions = new FlowLayoutPanel();
         actions.Dock = DockStyle.Fill;
@@ -186,7 +179,7 @@ internal sealed class BackendControlForm : Form
     {
         SetBusy(true, "正在检测移动硬盘", "未插入或序列号不匹配时不会启动后端。");
         DriveCheckResult drive = await CheckDriveAsync();
-        UpdateDriveCard(drive);
+        chainView.SetState(StatusKind.Working, StatusKind.Working, drive.Ready ? StatusKind.Good : StatusKind.Bad, drive.Summary);
 
         if (!drive.Ready)
         {
@@ -234,9 +227,17 @@ internal sealed class BackendControlForm : Form
             DriveCheckResult drive = await CheckDriveAsync();
             ConnectionResult backend = await CheckBackendAsync();
             ConnectionResult publicChain = await CheckPublicChainAsync();
-            UpdateDriveCard(drive);
-            UpdateBackendCard(backend);
-            UpdatePublicChainCard(publicChain);
+            bool restartedTunnel = false;
+
+            if (drive.Ready && backend.Ok && !publicChain.Ok && ShouldRestartTunnel())
+            {
+                restartedTunnel = true;
+                overallPill.SetState(StatusKind.Working, "正在重启隧道", "公网链路异常，正在重启 frpc 后复查。");
+                await RestartFrpcAsync();
+                publicChain = await CheckPublicChainAsync();
+            }
+
+            UpdateChainView(drive, backend, publicChain, restartedTunnel);
 
             if (drive.Ready && backend.Ok && publicChain.Ok)
             {
@@ -244,7 +245,11 @@ internal sealed class BackendControlForm : Form
             }
             else if (drive.Ready && backend.Ok)
             {
-                overallPill.SetState(StatusKind.Warning, "本机后端正常，隧道未连通", publicChain.Message);
+                overallPill.SetState(
+                    StatusKind.Warning,
+                    restartedTunnel ? "隧道重启后仍未连通" : "本机后端正常，隧道未连通",
+                    publicChain.Message
+                );
             }
             else if (drive.Ready)
             {
@@ -265,31 +270,33 @@ internal sealed class BackendControlForm : Form
         }
     }
 
-    private void UpdateDriveCard(DriveCheckResult drive)
+    private void UpdateChainView(DriveCheckResult drive, ConnectionResult backend, ConnectionResult publicChain, bool restartedTunnel)
     {
-        driveCard.SetState(
-            drive.Ready ? StatusKind.Good : StatusKind.Bad,
-            drive.Ready ? "已连接" : "未就绪",
-            drive.Summary
-        );
-    }
+        StatusKind frontendToTunnel = publicChain.Ok ? StatusKind.Good : StatusKind.Bad;
+        StatusKind tunnelToBackend = publicChain.Ok && backend.Ok ? StatusKind.Good : StatusKind.Bad;
+        StatusKind backendToDrive = backend.Ok && drive.Ready ? StatusKind.Good : StatusKind.Bad;
 
-    private void UpdateBackendCard(ConnectionResult backend)
-    {
-        backendCard.SetState(
-            backend.Ok ? StatusKind.Good : StatusKind.Bad,
-            backend.Ok ? "运行中" : "未启动",
-            backend.Message
-        );
-    }
+        string detail;
+        if (publicChain.Ok && backend.Ok && drive.Ready)
+        {
+            detail = "前端 → 隧道 → 后端 → 硬盘 全链路正常。";
+        }
+        else if (backend.Ok && drive.Ready && !publicChain.Ok)
+        {
+            detail = restartedTunnel
+                ? "隧道异常，已自动重启 frpc 后复查，仍未连通。"
+                : "本机后端和硬盘正常，公网链路未连通。";
+        }
+        else if (!backend.Ok)
+        {
+            detail = backend.Message;
+        }
+        else
+        {
+            detail = drive.Summary;
+        }
 
-    private void UpdatePublicChainCard(ConnectionResult publicChain)
-    {
-        publicChainCard.SetState(
-            publicChain.Ok ? StatusKind.Good : StatusKind.Bad,
-            publicChain.Ok ? "已连通" : "未连通",
-            publicChain.Message
-        );
+        chainView.SetState(frontendToTunnel, tunnelToBackend, backendToDrive, detail);
     }
 
     private async Task<DriveCheckResult> CheckDriveAsync()
@@ -523,6 +530,20 @@ internal sealed class BackendControlForm : Form
             }
             catch {}
         });
+    }
+
+    private bool ShouldRestartTunnel()
+    {
+        return DateTime.Now - lastTunnelRestartAt > TimeSpan.FromSeconds(60);
+    }
+
+    private async Task RestartFrpcAsync()
+    {
+        lastTunnelRestartAt = DateTime.Now;
+        await StopFrpcAsync();
+        await Task.Delay(1200);
+        await StartFrpcAsync();
+        await Task.Delay(3500);
     }
 
     private static bool IsProcessRunning(string processName)
@@ -859,6 +880,174 @@ internal sealed class StatusPill : Control
             (int)(a.G * amount + b.G * (1F - amount)),
             (int)(a.B * amount + b.B * (1F - amount))
         );
+    }
+}
+
+internal sealed class ChainView : Control
+{
+    private StatusKind frontendToTunnel = StatusKind.Working;
+    private StatusKind tunnelToBackend = StatusKind.Working;
+    private StatusKind backendToDrive = StatusKind.Working;
+    private string detail = "";
+
+    public ChainView()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true);
+        DoubleBuffered = true;
+        BackColor = Color.Transparent;
+        ApplyClip();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        ApplyClip();
+    }
+
+    private void ApplyClip()
+    {
+        if (Width <= 0 || Height <= 0) return;
+        using (GraphicsPath path = BackendControlForm.RoundedRect(new Rectangle(0, 0, Width, Height), 24))
+        {
+            Region = new Region(path);
+        }
+    }
+
+    public void SetState(StatusKind frontendTunnel, StatusKind tunnelBackend, StatusKind backendDrive, string detailText)
+    {
+        frontendToTunnel = frontendTunnel;
+        tunnelToBackend = tunnelBackend;
+        backendToDrive = backendDrive;
+        detail = detailText ?? "";
+        Invalidate();
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        base.OnPaintBackground(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (GraphicsPath path = BackendControlForm.RoundedRect(rect, 24))
+        using (LinearGradientBrush brush = new LinearGradientBrush(rect, Color.FromArgb(42, 48, 63), Color.FromArgb(24, 29, 40), 120F))
+        using (Pen border = new Pen(Color.FromArgb(68, 255, 255, 255), 1F))
+        {
+            e.Graphics.FillPath(brush, path);
+            e.Graphics.DrawPath(border, path);
+        }
+
+        int top = 42;
+        int nodeSize = 72;
+        int left = 24;
+        int right = Width - 24;
+        int span = Math.Max(1, right - left - nodeSize);
+        int y = top;
+        string[] nodeNames = new[] { "前端", "隧道", "后端", "硬盘" };
+        StatusKind[] nodeKinds = new[]
+        {
+            frontendToTunnel,
+            Merge(frontendToTunnel, tunnelToBackend),
+            Merge(tunnelToBackend, backendToDrive),
+            backendToDrive
+        };
+
+        Point[] centers = new Point[4];
+        for (int i = 0; i < 4; i++)
+        {
+            int x = left + (span * i / 3) + nodeSize / 2;
+            centers[i] = new Point(x, y + nodeSize / 2);
+        }
+
+        DrawSegment(e.Graphics, centers[0], centers[1], frontendToTunnel, "前端-隧道");
+        DrawSegment(e.Graphics, centers[1], centers[2], tunnelToBackend, "隧道-后端");
+        DrawSegment(e.Graphics, centers[2], centers[3], backendToDrive, "后端-硬盘");
+
+        for (int i = 0; i < 4; i++)
+        {
+            DrawNode(e.Graphics, centers[i], nodeSize, nodeNames[i], nodeKinds[i]);
+        }
+
+        using (SolidBrush detailBrush = new SolidBrush(Color.FromArgb(188, 213, 224, 240)))
+        using (Font detailFont = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular))
+        {
+            RectangleF detailRect = new RectangleF(22, Height - 62, Width - 44, 42);
+            e.Graphics.DrawString(TrimToWidth(e.Graphics, detail, detailFont, Width - 44), detailFont, detailBrush, detailRect);
+        }
+    }
+
+    private static StatusKind Merge(StatusKind left, StatusKind right)
+    {
+        if (left == StatusKind.Bad || right == StatusKind.Bad) return StatusKind.Bad;
+        if (left == StatusKind.Warning || right == StatusKind.Warning) return StatusKind.Warning;
+        if (left == StatusKind.Working || right == StatusKind.Working) return StatusKind.Working;
+        return StatusKind.Good;
+    }
+
+    private void DrawSegment(Graphics graphics, Point start, Point end, StatusKind kind, string label)
+    {
+        Color accent = StatusPill.Palette(kind);
+        using (Pen muted = new Pen(Color.FromArgb(44, 255, 255, 255), 8F))
+        using (Pen active = new Pen(Color.FromArgb(172, accent), 4F))
+        {
+            muted.StartCap = LineCap.Round;
+            muted.EndCap = LineCap.Round;
+            active.StartCap = LineCap.Round;
+            active.EndCap = LineCap.Round;
+            graphics.DrawLine(muted, start.X + 35, start.Y, end.X - 35, end.Y);
+            graphics.DrawLine(active, start.X + 35, start.Y, end.X - 35, end.Y);
+        }
+
+        int dotX = (start.X + end.X) / 2;
+        int dotY = start.Y;
+        using (SolidBrush glow = new SolidBrush(Color.FromArgb(70, accent)))
+        using (SolidBrush dot = new SolidBrush(accent))
+        {
+            graphics.FillEllipse(glow, dotX - 15, dotY - 15, 30, 30);
+            graphics.FillEllipse(dot, dotX - 7, dotY - 7, 14, 14);
+        }
+
+        using (SolidBrush text = new SolidBrush(Color.FromArgb(170, 212, 224, 238)))
+        using (Font font = new Font("Microsoft YaHei UI", 8.2F, FontStyle.Bold))
+        {
+            SizeF size = graphics.MeasureString(label, font);
+            graphics.DrawString(label, font, text, dotX - size.Width / 2F, dotY + 18);
+        }
+    }
+
+    private void DrawNode(Graphics graphics, Point center, int size, string label, StatusKind kind)
+    {
+        Color accent = StatusPill.Palette(kind);
+        Rectangle nodeRect = new Rectangle(center.X - size / 2, center.Y - size / 2, size, size);
+        using (GraphicsPath path = BackendControlForm.RoundedRect(nodeRect, 22))
+        using (LinearGradientBrush brush = new LinearGradientBrush(nodeRect, Color.FromArgb(64, 255, 255, 255), Color.FromArgb(18, 255, 255, 255), 135F))
+        using (Pen border = new Pen(Color.FromArgb(100, accent), 2F))
+        {
+            graphics.FillPath(brush, path);
+            graphics.DrawPath(border, path);
+        }
+
+        using (SolidBrush dot = new SolidBrush(accent))
+        using (SolidBrush title = new SolidBrush(Color.White))
+        using (Font titleFont = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold))
+        {
+            graphics.FillEllipse(dot, center.X - 6, center.Y - 22, 12, 12);
+            SizeF sizeText = graphics.MeasureString(label, titleFont);
+            graphics.DrawString(label, titleFont, title, center.X - sizeText.Width / 2F, center.Y - 2);
+        }
+    }
+
+    private static string TrimToWidth(Graphics graphics, string value, Font font, int maxWidth)
+    {
+        if (graphics.MeasureString(value, font).Width <= maxWidth) return value;
+        for (int length = value.Length - 1; length > 0; length--)
+        {
+            string candidate = value.Substring(0, length) + "...";
+            if (graphics.MeasureString(candidate, font).Width <= maxWidth) return candidate;
+        }
+        return "...";
     }
 }
 
