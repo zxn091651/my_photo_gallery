@@ -761,24 +761,23 @@ internal sealed class BackendControlForm : Form
     {
         string tunnelName = ReadTunnelNameFromIni(pathValue);
         string id = ExtractTunnelId(pathValue);
-        string statePrefix = running ? "当前运行隧道" : prefix;
 
         if (tunnelName.Length > 0 && id.Length > 0)
         {
-            return statePrefix + "：" + tunnelName + "（" + id + "）";
+            return tunnelName + "（" + id + "）";
         }
 
         if (tunnelName.Length > 0)
         {
-            return statePrefix + "：" + tunnelName;
+            return tunnelName;
         }
 
         if (id.Length > 0)
         {
-            return statePrefix + " " + id;
+            return "隧道 " + id;
         }
 
-        return statePrefix + "：" + Path.GetFileName(pathValue);
+        return Path.GetFileName(pathValue);
     }
 
     private static string ReadTunnelNameFromIni(string pathValue)
@@ -1222,13 +1221,17 @@ internal sealed class TunnelConfigOption
 
     public override string ToString()
     {
-        string suffix = Exists ? "" : "（ini 未找到）";
-        if (isRunning && DisplayName.IndexOf("当前运行隧道", StringComparison.OrdinalIgnoreCase) < 0)
+        List<string> tags = new List<string>();
+        if (isRunning)
         {
-            return "当前运行：" + DisplayName + suffix;
+            tags.Add("当前运行");
+        }
+        if (!Exists)
+        {
+            tags.Add("ini 未找到");
         }
 
-        return DisplayName + suffix;
+        return tags.Count == 0 ? DisplayName : DisplayName + " · " + string.Join(" · ", tags.ToArray());
     }
 }
 
