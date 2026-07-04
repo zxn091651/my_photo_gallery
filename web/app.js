@@ -240,8 +240,7 @@ function createUploadButton() {
 }
 
 function pageLabel(pageIndex) {
-  const labels = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
-  return `第${labels[pageIndex] || pageIndex + 1}页`;
+  return String(pageIndex + 1);
 }
 
 function setFolderPage(pageIndex) {
