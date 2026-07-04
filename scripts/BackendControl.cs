@@ -938,13 +938,22 @@ internal sealed class BackendControlForm : Form
 
     private static void AddLauncherProxyOptions(List<TunnelConfigOption> options, string appDataConfigDir, string userToken)
     {
+        List<TunnelConfigOption> apiOptions = FetchChmlFrpApiTunnelOptions(userToken);
+        if (apiOptions.Count > 0)
+        {
+            foreach (TunnelConfigOption option in apiOptions)
+            {
+                AddProxyTunnelOption(options, option.ProxyId, option.DisplayName, userToken, IsFrpcRunningForProxyStatic(option.ProxyId));
+            }
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(appDataConfigDir) || !Directory.Exists(appDataConfigDir))
         {
             return;
         }
 
         List<string> ids = new List<string>();
-        AddTunnelIdsFromJson(ids, Path.Combine(appDataConfigDir, "tunnel_auto_start.json"));
         AddTunnelIdsFromJson(ids, Path.Combine(appDataConfigDir, "running_tunnels.json"));
 
         Dictionary<string, string> namesById = ReadChmlFrpTunnelNamesById();
@@ -983,6 +992,55 @@ internal sealed class BackendControlForm : Form
             }
         }
         catch {}
+    }
+
+    private static List<TunnelConfigOption> FetchChmlFrpApiTunnelOptions(string userToken)
+    {
+        List<TunnelConfigOption> result = new List<TunnelConfigOption>();
+        if (string.IsNullOrWhiteSpace(userToken))
+        {
+            return result;
+        }
+
+        try
+        {
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create("https://cf-v2.uapis.cn/tunnel");
+            request.Method = "GET";
+            request.Timeout = 8000;
+            request.ReadWriteTimeout = 8000;
+            request.UserAgent = "zxn-photo-gallery-control";
+            request.Headers[HttpRequestHeader.Authorization] = userToken;
+
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (Stream stream = response.GetResponseStream())
+            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                string body = reader.ReadToEnd();
+                if (!Regex.IsMatch(body, "\"code\"\\s*:\\s*200|\"state\"\\s*:\\s*(true|\"success\")", RegexOptions.IgnoreCase))
+                {
+                    return result;
+                }
+
+                MatchCollection objects = Regex.Matches(body, "\\{[^{}]*\"id\"\\s*:\\s*\\d+[^{}]*\\}", RegexOptions.IgnoreCase);
+                foreach (Match item in objects)
+                {
+                    string text = item.Value;
+                    Match idMatch = Regex.Match(text, "\"id\"\\s*:\\s*(?<id>\\d+)", RegexOptions.IgnoreCase);
+                    Match nameMatch = Regex.Match(text, "\"name\"\\s*:\\s*\"(?<name>(?:\\\\.|[^\"])*)\"", RegexOptions.IgnoreCase);
+                    if (!idMatch.Success)
+                    {
+                        continue;
+                    }
+
+                    string id = idMatch.Groups["id"].Value;
+                    string name = nameMatch.Success ? DecodeJsonString(nameMatch.Groups["name"].Value) : string.Empty;
+                    result.Add(new TunnelConfigOption(CleanTunnelName(name), BuildProxyKey(id), true, false, id, userToken));
+                }
+            }
+        }
+        catch {}
+
+        return result;
     }
 
     private static void AddProxyTunnelOption(List<TunnelConfigOption> options, string proxyId, string tunnelName, string userToken, bool running)
@@ -1079,11 +1137,93 @@ internal sealed class BackendControlForm : Form
         return clean;
     }
 
+    private static string DecodeJsonString(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return Regex.Unescape(value.Replace("\\\"", "\""));
+        }
+        catch
+        {
+            return value;
+        }
+    }
+
     private static string ReadChmlFrpUserToken()
     {
+        string configured = ReadConfiguredChmlFrpUserToken();
+        if (configured.Length > 0)
+        {
+            return configured;
+        }
+
+        string sdkToken = ReadSdkChmlFrpUserToken();
+        if (sdkToken.Length > 0)
+        {
+            return sdkToken;
+        }
+
         string compact = ReadChmlFrpLocalStorageCompactText();
         MatchCollection matches = Regex.Matches(compact, "usertoken\\\":\\\"(?<token>[A-Za-z0-9_-]{16,100})", RegexOptions.IgnoreCase);
         return matches.Count == 0 ? string.Empty : matches[matches.Count - 1].Groups["token"].Value;
+    }
+
+    private static string ReadConfiguredChmlFrpUserToken()
+    {
+        try
+        {
+            string envPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar), ".env");
+            if (!File.Exists(envPath))
+            {
+                return string.Empty;
+            }
+
+            foreach (string rawLine in File.ReadAllLines(envPath, Encoding.UTF8))
+            {
+                string line = rawLine.Trim();
+                if (line.Length == 0 || line.StartsWith("#") || !line.Contains("="))
+                {
+                    continue;
+                }
+
+                int separator = line.IndexOf('=');
+                string key = line.Substring(0, separator).Trim();
+                if (!string.Equals(key, "CHMLFRP_USER_TOKEN", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return line.Substring(separator + 1).Trim().Trim('"');
+            }
+        }
+        catch {}
+
+        return string.Empty;
+    }
+
+    private static string ReadSdkChmlFrpUserToken()
+    {
+        try
+        {
+            string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"ChmlFrp\user.json");
+            if (!File.Exists(path))
+            {
+                return string.Empty;
+            }
+
+            string text = File.ReadAllText(path, Encoding.UTF8);
+            Match match = Regex.Match(text, "\"usertoken\"\\s*:\\s*\"(?<token>[A-Za-z0-9_-]{16,100})\"", RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups["token"].Value : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static Dictionary<string, string> ReadChmlFrpTunnelNamesById()
