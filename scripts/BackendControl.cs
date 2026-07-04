@@ -916,13 +916,19 @@ internal sealed class BackendControlForm : Form
             return;
         }
 
-        await Task.Run(delegate
+        bool saved = await Task.Run(delegate
         {
-            SaveEnvValue("CHMLFRP_CONFIG_PATH", selected);
+            return SaveEnvValue("CHMLFRP_CONFIG_PATH", selected);
         });
 
         if (showMessage)
         {
+            if (!saved)
+            {
+                overallPill.SetState(StatusKind.Warning, "配置暂时未保存", ".env 正被其它进程占用，本次仍会继续使用当前选择。");
+                return;
+            }
+
             overallPill.SetState(
                 File.Exists(selected) ? StatusKind.Good : StatusKind.Warning,
                 "隧道配置已保存",
@@ -931,33 +937,68 @@ internal sealed class BackendControlForm : Form
         }
     }
 
-    private void SaveEnvValue(string key, string value)
+    private bool SaveEnvValue(string key, string value)
     {
         string envPath = Path.Combine(projectRoot, ".env");
-        List<string> lines = new List<string>();
-        if (File.Exists(envPath))
+        for (int attempt = 0; attempt < 6; attempt++)
         {
-            lines.AddRange(File.ReadAllLines(envPath, Encoding.UTF8));
-        }
-
-        bool updated = false;
-        for (int index = 0; index < lines.Count; index++)
-        {
-            string line = lines[index].Trim();
-            if (line.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                lines[index] = key + "=" + value;
-                updated = true;
-                break;
+                List<string> lines = new List<string>();
+                if (File.Exists(envPath))
+                {
+                    using (FileStream readStream = new FileStream(envPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                    using (StreamReader reader = new StreamReader(readStream, Encoding.UTF8))
+                    {
+                        string content = reader.ReadToEnd();
+                        lines.AddRange(content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None));
+                    }
+                }
+
+                while (lines.Count > 0 && lines[lines.Count - 1].Length == 0)
+                {
+                    lines.RemoveAt(lines.Count - 1);
+                }
+
+                bool updated = false;
+                for (int index = 0; index < lines.Count; index++)
+                {
+                    string line = lines[index].Trim();
+                    if (line.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        lines[index] = key + "=" + value;
+                        updated = true;
+                        break;
+                    }
+                }
+
+                if (!updated)
+                {
+                    lines.Add(key + "=" + value);
+                }
+
+                using (FileStream writeStream = new FileStream(envPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                using (StreamWriter writer = new StreamWriter(writeStream, Encoding.UTF8))
+                {
+                    foreach (string line in lines)
+                    {
+                        writer.WriteLine(line);
+                    }
+                }
+
+                return true;
+            }
+            catch (IOException)
+            {
+                System.Threading.Thread.Sleep(180);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                System.Threading.Thread.Sleep(180);
             }
         }
 
-        if (!updated)
-        {
-            lines.Add(key + "=" + value);
-        }
-
-        File.WriteAllLines(envPath, lines.ToArray(), Encoding.UTF8);
+        return false;
     }
 
     private bool IsFrpcRunningForConfig(string configPath)
