@@ -14,6 +14,7 @@ const safeStoredApiBase = isHostedFrontend && isLocalBackendUrl(storedApiBase) ?
 const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 const isHttpsPage = window.location.protocol === 'https:';
 const FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 6 : 12;
+const HEARTBEAT_INTERVAL_MS = 10_000;
 const TAP_SLOP = 2;
 
 const state = {
@@ -27,6 +28,7 @@ const state = {
   activeMediaIndex: 0,
   deckAnimation: null,
   preloadTimer: null,
+  heartbeatInFlight: false,
   drag: null
 };
 
@@ -161,6 +163,25 @@ function setStatus(status) {
     ? `正常工作：已检测到指定移动硬盘序列号。`
     : `异常：未检测到指定移动硬盘序列号，或影像备份目录未就绪。`;
   setConnectionStatus(isHealthy, detail);
+}
+
+async function checkBackendHeartbeat() {
+  if (state.heartbeatInFlight) return;
+  state.heartbeatInFlight = true;
+
+  try {
+    const status = await requestJson('/api/status');
+    setStatus(status);
+  } catch {
+    setConnectionStatus(false, '心跳检测失败：无法连接后端。');
+  } finally {
+    state.heartbeatInFlight = false;
+  }
+}
+
+function startBackendHeartbeat() {
+  checkBackendHeartbeat();
+  window.setInterval(checkBackendHeartbeat, HEARTBEAT_INTERVAL_MS);
 }
 
 function folderTitle(folderPath) {
@@ -689,7 +710,7 @@ async function openFolder(folderPath = '') {
   state.currentFolder = folderPath;
   state.isRandomMode = false;
   elements.currentFolder.textContent = folderTitle(folderPath);
-  setConnectionStatus(false, '正在连接后端并读取影像备份。');
+  setConnectionStatus(true, '后端已连接，正在读取影像备份。');
   elements.mediaCount.textContent = '正在读取文件夹...';
   elements.rootButton.hidden = !folderPath;
 
@@ -724,7 +745,7 @@ async function openRandomMode() {
   state.currentFolder = '';
   state.isRandomMode = true;
   elements.currentFolder.textContent = '随机探索';
-  setConnectionStatus(false, '正在随机扫描所有子文件夹的照片。');
+  setConnectionStatus(true, '后端已连接，正在随机扫描所有子文件夹的照片。');
   elements.mediaCount.textContent = '正在随机抽取照片...';
   elements.rootButton.hidden = false;
 
@@ -861,4 +882,5 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+startBackendHeartbeat();
 openFolder('');
