@@ -455,9 +455,8 @@ function navigateToPreviousMedia() {
 }
 
 function createMediaElement(file, isPriority) {
-  const source = apiUrl(file.thumbUrl || file.viewUrl).toString();
-
   if (file.type === 'image') {
+    const source = apiUrl(file.thumbUrl || file.viewUrl).toString();
     const image = document.createElement('img');
     image.className = 'deck-media';
     image.loading = isPriority ? 'eager' : 'lazy';
@@ -468,13 +467,11 @@ function createMediaElement(file, isPriority) {
     return image;
   }
 
-  const video = document.createElement('video');
-  video.className = 'deck-media';
-  video.preload = 'metadata';
-  video.muted = true;
-  video.playsInline = true;
-  video.src = `${source}#t=0.1`;
-  return video;
+  const placeholder = document.createElement('div');
+  placeholder.className = 'deck-media video-placeholder';
+  placeholder.setAttribute('aria-label', file.name);
+  placeholder.innerHTML = '<span>视频</span>';
+  return placeholder;
 }
 
 function mediaTypeLabel(file) {
@@ -565,6 +562,7 @@ function resetActiveCard(card) {
 
 function attachSwipeHandlers(card) {
   card.addEventListener('pointerdown', (event) => {
+    if (elements.viewerDialog.open) return;
     if (event.button !== 0) return;
     state.drag = {
       startX: event.clientX,
@@ -665,6 +663,21 @@ function attachSwipeHandlers(card) {
     removePreviousPeek(previousCard);
     resetActiveCard(card);
   });
+}
+
+function resetDeckInteraction() {
+  const activeDraggingCards = elements.mediaGrid.querySelectorAll('.deck-card.dragging');
+  for (const card of activeDraggingCards) {
+    card.classList.remove('dragging');
+    resetActiveCard(card);
+  }
+
+  const peekCards = elements.mediaGrid.querySelectorAll('.deck-card.previous-peek');
+  for (const card of peekCards) {
+    card.remove();
+  }
+
+  state.drag = null;
 }
 
 function preloadUpcomingThumbnails() {
@@ -876,6 +889,7 @@ async function openRandomMode() {
 function openViewer(file) {
   if (!file) return;
 
+  resetDeckInteraction();
   elements.viewerTitle.textContent = file.name;
   elements.viewerStage.replaceChildren();
 
@@ -891,13 +905,30 @@ function openViewer(file) {
     elements.viewerStage.append(image);
   } else {
     const video = document.createElement('video');
+    video.className = 'viewer-video';
     video.controls = true;
-    video.autoplay = true;
+    video.preload = 'none';
+    video.playsInline = true;
+    video.disablePictureInPicture = false;
     video.src = source;
     elements.viewerStage.append(video);
   }
 
   elements.viewerDialog.showModal();
+}
+
+function clearViewerStage() {
+  const videos = elements.viewerStage.querySelectorAll('video');
+  for (const video of videos) {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  }
+  elements.viewerStage.replaceChildren();
+  resetDeckInteraction();
+  if (state.mediaFiles.length) {
+    renderMediaDeck();
+  }
 }
 
 function folderOptionLabel(folder) {
@@ -995,11 +1026,10 @@ elements.uploadForm.addEventListener('submit', (event) => {
 elements.newFolderInput.addEventListener('input', syncUploadTargetState);
 elements.closeViewerButton.addEventListener('click', () => {
   elements.viewerDialog.close();
-  elements.viewerStage.replaceChildren();
 });
 
 elements.viewerDialog.addEventListener('close', () => {
-  elements.viewerStage.replaceChildren();
+  clearViewerStage();
 });
 
 document.addEventListener('keydown', (event) => {
