@@ -1253,12 +1253,11 @@ internal sealed class BackendControlForm : Form
 
         try
         {
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create("https://cf-v2.uapis.cn/tunnel");
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create("https://cf-v2.uapis.cn/tunnel?token=" + Uri.EscapeDataString(userToken));
             request.Method = "GET";
             request.Timeout = 12000;
             request.ReadWriteTimeout = 12000;
             request.UserAgent = "zxn-photo-gallery-control";
-            request.Headers[HttpRequestHeader.Authorization] = userToken;
 
             string body = ReadHttpResponseText(request);
             return ParseChmlFrpTunnelResponse(body, userToken);
