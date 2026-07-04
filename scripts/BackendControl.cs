@@ -477,8 +477,8 @@ internal sealed class BackendControlForm : Form
             {
                 HttpWebRequest request = (HttpWebRequest)WebRequest.Create(localStatusUrl);
                 request.Method = "GET";
-                request.Timeout = 3500;
-                request.ReadWriteTimeout = 3500;
+                request.Timeout = 12000;
+                request.ReadWriteTimeout = 12000;
                 request.UserAgent = "zxn-photo-gallery-control";
 
                 using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
@@ -487,12 +487,19 @@ internal sealed class BackendControlForm : Form
                 {
                     string body = reader.ReadToEnd();
                     bool httpOk = (int)response.StatusCode >= 200 && (int)response.StatusCode < 400;
-                    bool bodyOk = Regex.IsMatch(body, "\"ok\"\\s*:\\s*true", RegexOptions.IgnoreCase);
-                    return new ConnectionResult(httpOk && bodyOk, httpOk && bodyOk ? "本机后端连接成功。" : "本机后端返回异常。");
+                    bool apiShapeOk = Regex.IsMatch(body, "\"computerOnline\"\\s*:", RegexOptions.IgnoreCase)
+                        || Regex.IsMatch(body, "\"ok\"\\s*:", RegexOptions.IgnoreCase);
+                    bool backendOk = httpOk && apiShapeOk;
+                    return new ConnectionResult(backendOk, backendOk ? "本机后端连接成功。" : "本机后端返回异常。");
                 }
             }
             catch
             {
+                if (IsProjectBackendListening())
+                {
+                    return new ConnectionResult(true, "本机后端端口正在监听。");
+                }
+
                 return new ConnectionResult(false, "后端没有运行。");
             }
         });
@@ -511,8 +518,8 @@ internal sealed class BackendControlForm : Form
             {
                 HttpWebRequest request = (HttpWebRequest)WebRequest.Create(config.PublicStatusUrl);
                 request.Method = "GET";
-                request.Timeout = 6000;
-                request.ReadWriteTimeout = 6000;
+                request.Timeout = 12000;
+                request.ReadWriteTimeout = 12000;
                 request.UserAgent = "zxn-photo-gallery-control";
 
                 using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
@@ -521,10 +528,12 @@ internal sealed class BackendControlForm : Form
                 {
                     string body = reader.ReadToEnd();
                     bool httpOk = (int)response.StatusCode >= 200 && (int)response.StatusCode < 400;
-                    bool bodyOk = Regex.IsMatch(body, "\"ok\"\\s*:\\s*true", RegexOptions.IgnoreCase);
+                    bool apiShapeOk = Regex.IsMatch(body, "\"computerOnline\"\\s*:", RegexOptions.IgnoreCase)
+                        || Regex.IsMatch(body, "\"ok\"\\s*:", RegexOptions.IgnoreCase);
+                    bool chainOk = httpOk && apiShapeOk;
                     return new ConnectionResult(
-                        httpOk && bodyOk,
-                        httpOk && bodyOk ? "公网 API 可访问，隧道已连到本机后端。" : "公网 API 返回异常。"
+                        chainOk,
+                        chainOk ? "公网 API 可访问，隧道已连到本机后端。" : "公网 API 返回异常。"
                     );
                 }
             }
@@ -533,6 +542,18 @@ internal sealed class BackendControlForm : Form
                 return new ConnectionResult(false, "公网 API 无法访问，请检查 frpc 隧道。");
             }
         });
+    }
+
+    private bool IsProjectBackendListening()
+    {
+        string command =
+            "$listeners = @(Get-NetTCPConnection -LocalPort " + config.Port + " -State Listen -ErrorAction SilentlyContinue); " +
+            "foreach ($listener in $listeners) { " +
+            "$process = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $listener.OwningProcess) -ErrorAction SilentlyContinue; " +
+            "if ($process -and $process.Name -ieq 'node.exe' -and $process.CommandLine -match 'server\\.js') { 'OK'; break } " +
+            "}";
+        string output = RunHiddenProcess("powershell.exe", "-NoProfile -Command " + Quote(command), 6000);
+        return output.IndexOf("OK", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private async Task RunPowerShellScriptAsync(string scriptName, string extraArguments)
