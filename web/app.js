@@ -15,6 +15,8 @@ const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 const isHttpsPage = window.location.protocol === 'https:';
 const DEFAULT_FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 7 : 13;
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const HEARTBEAT_FAILURES_BEFORE_BAD = 3;
+const DOWNLOAD_STATUS_GRACE_MS = 120_000;
 const TAP_SLOP = 2;
 
 const state = {
@@ -31,6 +33,8 @@ const state = {
   preloadTimer: null,
   resizeTimer: null,
   heartbeatInFlight: false,
+  heartbeatFailures: 0,
+  downloadStatusGraceUntil: 0,
   drag: null
 };
 
@@ -177,7 +181,15 @@ function setStatus(status) {
   const detail = isHealthy
     ? `正常工作：已检测到指定移动硬盘序列号。`
     : `异常：未检测到指定移动硬盘序列号，或影像备份目录未就绪。`;
+  if (isHealthy) {
+    state.heartbeatFailures = 0;
+  }
   setConnectionStatus(isHealthy, detail);
+}
+
+function markDownloadStarting() {
+  state.downloadStatusGraceUntil = Date.now() + DOWNLOAD_STATUS_GRACE_MS;
+  setConnectionStatus(true, '正在开始下载，后端连接状态保持正常。');
 }
 
 async function checkBackendHeartbeat() {
@@ -188,7 +200,12 @@ async function checkBackendHeartbeat() {
     const status = await requestJson('/api/status');
     setStatus(status);
   } catch {
-    setConnectionStatus(false, '心跳检测失败：无法连接后端。');
+    state.heartbeatFailures += 1;
+    if (Date.now() < state.downloadStatusGraceUntil) {
+      setConnectionStatus(true, '下载请求进行中，暂不把心跳延迟判定为异常。');
+    } else if (state.heartbeatFailures >= HEARTBEAT_FAILURES_BEFORE_BAD) {
+      setConnectionStatus(false, '连续心跳检测失败：无法连接后端。');
+    }
   } finally {
     state.heartbeatInFlight = false;
   }
@@ -781,6 +798,7 @@ function renderMediaDeck() {
   downloadLink.textContent = '下载';
   downloadLink.href = apiUrl(currentMediaFile().downloadUrl).toString();
   downloadLink.setAttribute('download', currentMediaFile().name);
+  downloadLink.addEventListener('click', markDownloadStarting);
 
   const jumpForm = document.createElement('form');
   jumpForm.className = 'deck-jump';
@@ -1033,6 +1051,7 @@ elements.uploadForm.addEventListener('submit', (event) => {
   uploadFiles();
 });
 elements.newFolderInput.addEventListener('input', syncUploadTargetState);
+elements.downloadLink.addEventListener('click', markDownloadStarting);
 elements.closeViewerButton.addEventListener('click', () => {
   elements.viewerDialog.close();
 });
