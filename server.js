@@ -12,8 +12,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
-const MEDIA_ROOT = path.resolve(process.env.GALLERY_ROOT || 'F:\\影像备份');
-const DRIVE_LETTER = process.env.GALLERY_DRIVE || path.parse(MEDIA_ROOT).root.replace(/[:\\\/]/g, '') || 'F';
+const CONFIGURED_MEDIA_ROOT = process.env.GALLERY_ROOT || '';
+const MEDIA_FOLDER_NAME = process.env.GALLERY_MEDIA_FOLDER || (CONFIGURED_MEDIA_ROOT ? path.basename(CONFIGURED_MEDIA_ROOT) : '影像备份');
 const EXPECTED_DISK_SERIAL = normalizeDiskSerial(process.env.GALLERY_DISK_SERIAL || '');
 const UPLOAD_PASSWORD = process.env.GALLERY_UPLOAD_PASSWORD || '';
 const WEB_ROOT = path.join(__dirname, 'web');
@@ -79,6 +79,10 @@ const MIME_TYPES = new Map([
 ]);
 
 let rootRealPathCache = null;
+let rootRealPathCacheSource = '';
+let diskSerialStatusCache = null;
+let diskSerialStatusCacheAt = 0;
+const DISK_STATUS_CACHE_MS = 3000;
 
 function normalizeDiskSerial(value = '') {
   return String(value).replace(/\s+/g, '').toUpperCase();
@@ -139,9 +143,23 @@ function sanitizeFileName(value = '') {
   return `${safeBaseName}${extension}`;
 }
 
+function mediaRootFromDriveLetter(driveLetter) {
+  return path.resolve(`${driveLetter}:\\`, MEDIA_FOLDER_NAME);
+}
+
+async function getCurrentMediaRoot() {
+  const diskSerialStatus = await getDiskSerialStatus();
+  if (!diskSerialStatus.serialMatches || !diskSerialStatus.driveLetter) {
+    throw new Error('Expected removable drive was not found.');
+  }
+  return diskSerialStatus.mediaRoot;
+}
+
 async function getRootRealPath() {
-  if (rootRealPathCache) return rootRealPathCache;
-  rootRealPathCache = await realpath(MEDIA_ROOT);
+  const mediaRoot = await getCurrentMediaRoot();
+  if (rootRealPathCache && rootRealPathCacheSource === mediaRoot) return rootRealPathCache;
+  rootRealPathCache = await realpath(mediaRoot);
+  rootRealPathCacheSource = mediaRoot;
   return rootRealPathCache;
 }
 
@@ -253,63 +271,91 @@ function runPowerShell(command) {
   });
 }
 
-async function getDiskSerialStatus() {
+async function getDiskSerialStatus(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && diskSerialStatusCache && now - diskSerialStatusCacheAt < DISK_STATUS_CACHE_MS) {
+    return diskSerialStatusCache;
+  }
+
   const command = [
     '$ErrorActionPreference = "Stop";',
-    '$driveLetter = "' + DRIVE_LETTER.replace(/"/g, '') + '";',
-    '$driveDisk = $null;',
-    'try { $driveDisk = Get-Partition -DriveLetter $driveLetter -ErrorAction Stop | Get-Disk -ErrorAction Stop } catch {}',
-    '$allDisks = Get-Disk | Select-Object Number,FriendlyName,SerialNumber,BusType;',
-    '[pscustomobject]@{',
-    'DriveSerial = if ($driveDisk) { [string]$driveDisk.SerialNumber } else { "" };',
-    'Disks = @($allDisks)',
-    '} | ConvertTo-Json -Depth 4 -Compress'
+    '$disks = Get-Disk | ForEach-Object {',
+    '  $disk = $_;',
+    '  $letters = @();',
+    '  try { $letters = @(Get-Partition -DiskNumber $disk.Number -ErrorAction Stop | Where-Object { $_.DriveLetter } | ForEach-Object { [string]$_.DriveLetter }) } catch {}',
+    '  [pscustomobject]@{',
+    '    Number = $disk.Number;',
+    '    FriendlyName = [string]$disk.FriendlyName;',
+    '    SerialNumber = [string]$disk.SerialNumber;',
+    '    BusType = [string]$disk.BusType;',
+    '    DriveLetters = @($letters)',
+    '  }',
+    '};',
+    '[pscustomobject]@{ Disks = @($disks) } | ConvertTo-Json -Depth 5 -Compress'
   ].join(' ');
 
   const output = await runPowerShell(command);
   if (!output) {
-    return { driveDiskSerial: '', connectedSerials: [], serialMatches: false };
+    diskSerialStatusCache = { driveDiskSerial: '', connectedSerials: [], serialMatches: false, driveLetter: '', mediaRoot: '' };
+    diskSerialStatusCacheAt = now;
+    return diskSerialStatusCache;
   }
 
   try {
     const data = JSON.parse(output);
     const disks = Array.isArray(data.Disks) ? data.Disks : data.Disks ? [data.Disks] : [];
-    const connectedSerials = disks
-      .map((disk) => normalizeDiskSerial(disk.SerialNumber || ''))
-      .filter(Boolean);
-    const driveDiskSerial = normalizeDiskSerial(data.DriveSerial || '');
-    const serialMatches = EXPECTED_DISK_SERIAL
-      ? connectedSerials.includes(EXPECTED_DISK_SERIAL)
-      : Boolean(driveDiskSerial);
+    const connectedSerials = [];
+    let matchedDisk = null;
 
-    return { driveDiskSerial, connectedSerials, serialMatches };
+    for (const disk of disks) {
+      const serial = normalizeDiskSerial(disk.SerialNumber || '');
+      if (serial) connectedSerials.push(serial);
+      if (EXPECTED_DISK_SERIAL && serial === EXPECTED_DISK_SERIAL) {
+        matchedDisk = disk;
+      }
+    }
+
+    const driveDiskSerial = matchedDisk ? normalizeDiskSerial(matchedDisk.SerialNumber || '') : '';
+    const driveLetters = matchedDisk
+      ? (Array.isArray(matchedDisk.DriveLetters) ? matchedDisk.DriveLetters : matchedDisk.DriveLetters ? [matchedDisk.DriveLetters] : [])
+      : [];
+    const driveLetter = String(driveLetters.find(Boolean) || '').replace(/[^A-Za-z]/g, '').slice(0, 1).toUpperCase();
+    const serialMatches = Boolean(EXPECTED_DISK_SERIAL && matchedDisk && driveLetter);
+    const mediaRoot = serialMatches ? mediaRootFromDriveLetter(driveLetter) : '';
+
+    diskSerialStatusCache = { driveDiskSerial, connectedSerials, serialMatches, driveLetter, mediaRoot };
+    diskSerialStatusCacheAt = now;
+    return diskSerialStatusCache;
   } catch {
-    return { driveDiskSerial: '', connectedSerials: [], serialMatches: false };
+    diskSerialStatusCache = { driveDiskSerial: '', connectedSerials: [], serialMatches: false, driveLetter: '', mediaRoot: '' };
+    diskSerialStatusCacheAt = now;
+    return diskSerialStatusCache;
   }
 }
 
 async function getStatus() {
-  const driveRoot = `${DRIVE_LETTER}:\\`;
-  const [driveRootPresent, rootPresent, diskSerialStatus] = await Promise.all([
-    pathExists(driveRoot),
-    pathExists(MEDIA_ROOT),
-    getDiskSerialStatus()
+  const diskSerialStatus = await getDiskSerialStatus(true);
+  const driveRoot = diskSerialStatus.driveLetter ? `${diskSerialStatus.driveLetter}:\\` : '';
+  const [driveRootPresent, rootPresent] = await Promise.all([
+    driveRoot ? pathExists(driveRoot) : false,
+    diskSerialStatus.mediaRoot ? pathExists(diskSerialStatus.mediaRoot) : false
   ]);
 
   if (!rootPresent) {
     rootRealPathCache = null;
+    rootRealPathCacheSource = '';
   }
 
   return {
     ok: true,
     computerOnline: true,
-    driveLetter: DRIVE_LETTER,
+    driveLetter: diskSerialStatus.driveLetter,
     drivePresent: diskSerialStatus.serialMatches,
     driveRootPresent,
     expectedDiskSerial: EXPECTED_DISK_SERIAL,
     diskSerial: diskSerialStatus.driveDiskSerial,
     diskSerialMatches: diskSerialStatus.serialMatches,
-    mediaRoot: MEDIA_ROOT,
+    mediaRoot: diskSerialStatus.mediaRoot,
     mediaRootPresent: rootPresent
   };
 }
@@ -879,7 +925,8 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Photo gallery backend: http://127.0.0.1:${PORT}`);
-  console.log(`Media root: ${MEDIA_ROOT}`);
+  console.log(`Media folder: ${MEDIA_FOLDER_NAME}`);
+  console.log(`Expected disk serial: ${EXPECTED_DISK_SERIAL || '(not configured)'}`);
 });
 
 process.on('SIGINT', () => {

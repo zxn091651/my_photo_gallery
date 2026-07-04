@@ -115,7 +115,7 @@ internal sealed class BackendControlForm : Form
         cards.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         layout.Controls.Add(cards, 0, 2);
 
-        driveCard = new StatusCard("移动硬盘", "正在检测 " + config.MediaRoot);
+        driveCard = new StatusCard("移动硬盘", "正在按序列号检测移动硬盘");
         backendCard = new StatusCard("本机后端", localStatusUrl);
         cards.Controls.Add(driveCard, 0, 0);
         cards.Controls.Add(backendCard, 0, 1);
@@ -238,31 +238,36 @@ internal sealed class BackendControlForm : Form
     {
         return await Task.Run(delegate
         {
-            bool driveRootPresent = Directory.Exists(config.DriveLetter + ":\\");
-            bool mediaRootPresent = Directory.Exists(config.MediaRoot);
-            DiskSerialResult serial = GetDiskSerials(config.DriveLetter);
+            DiskSerialResult serial = FindDriveBySerial();
             string expectedSerial = NormalizeSerial(config.ExpectedDiskSerial);
-            bool serialMatches = expectedSerial.Length > 0
-                ? serial.ConnectedSerials.Contains(expectedSerial)
-                : NormalizeSerial(serial.DriveSerial).Length > 0;
-            bool ready = driveRootPresent && mediaRootPresent && serialMatches;
+            bool serialConfigured = expectedSerial.Length > 0;
+            bool serialMatches = serialConfigured && NormalizeSerial(serial.DriveSerial) == expectedSerial;
+            string mediaRoot = serialMatches && serial.DriveLetter.Length > 0
+                ? Path.Combine(serial.DriveLetter + ":\\", config.MediaFolderName)
+                : string.Empty;
+            bool mediaRootPresent = mediaRoot.Length > 0 && Directory.Exists(mediaRoot);
+            bool ready = serialMatches && mediaRootPresent;
 
             string summary;
             if (ready)
             {
-                summary = config.DriveLetter + ": 已插入，影像备份可访问，序列号匹配。";
+                summary = serial.DriveLetter + ": 已插入，" + config.MediaFolderName + " 可访问，序列号匹配。";
             }
-            else if (!driveRootPresent)
+            else if (!serialConfigured)
             {
-                summary = "未检测到 " + config.DriveLetter + ": 盘，请先插入移动硬盘。";
-            }
-            else if (!mediaRootPresent)
-            {
-                summary = "已检测到 " + config.DriveLetter + ":，但找不到 " + config.MediaRoot + "。";
+                summary = "未配置 GALLERY_DISK_SERIAL，无法识别移动硬盘。";
             }
             else if (!serialMatches)
             {
-                summary = "硬盘序列号不匹配，当前：" + (serial.DriveSerial.Length > 0 ? serial.DriveSerial : "未读取到");
+                summary = "未找到序列号为 " + config.ExpectedDiskSerial + " 的移动硬盘。";
+            }
+            else if (serial.DriveLetter.Length == 0)
+            {
+                summary = "已找到移动硬盘，但 Windows 没有分配盘符。";
+            }
+            else if (!mediaRootPresent)
+            {
+                summary = "已找到移动硬盘 " + serial.DriveLetter + ":，但找不到 " + mediaRoot + "。";
             }
             else
             {
@@ -271,6 +276,55 @@ internal sealed class BackendControlForm : Form
 
             return new DriveCheckResult(ready, summary);
         });
+    }
+
+    private DiskSerialResult FindDriveBySerial()
+    {
+        string expectedSerial = NormalizeSerial(config.ExpectedDiskSerial);
+        string command =
+            "$disks = Get-Disk | ForEach-Object { " +
+            "$disk = $_; " +
+            "$letters = @(); " +
+            "try { $letters = @(Get-Partition -DiskNumber $disk.Number -ErrorAction Stop | Where-Object { $_.DriveLetter } | ForEach-Object { [string]$_.DriveLetter }) } catch {}; " +
+            "'DISK=' + [string]$disk.SerialNumber + '|' + (($letters -join ',')) " +
+            "}; $disks";
+        string output = RunHiddenProcess("powershell.exe", "-NoProfile -Command " + Quote(command), 5000);
+
+        foreach (string rawLine in output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string line = rawLine.Trim();
+            if (!line.StartsWith("DISK=", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string payload = line.Substring(5);
+            string[] parts = payload.Split(new[] { '|' }, 2);
+            string serial = parts.Length > 0 ? parts[0].Trim() : string.Empty;
+            if (NormalizeSerial(serial) != expectedSerial)
+            {
+                continue;
+            }
+
+            string driveLetter = string.Empty;
+            if (parts.Length > 1)
+            {
+                string[] letters = parts[1].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (string letter in letters)
+                {
+                    string clean = Regex.Replace(letter, "[^A-Za-z]", "").ToUpperInvariant();
+                    if (clean.Length > 0)
+                    {
+                        driveLetter = clean.Substring(0, 1);
+                        break;
+                    }
+                }
+            }
+
+            return new DiskSerialResult(serial, driveLetter);
+        }
+
+        return new DiskSerialResult(string.Empty, string.Empty);
     }
 
     private async Task<ConnectionResult> CheckBackendAsync()
@@ -300,38 +354,6 @@ internal sealed class BackendControlForm : Form
                 return new ConnectionResult(false, "后端没有运行。");
             }
         });
-    }
-
-    private DiskSerialResult GetDiskSerials(string driveLetter)
-    {
-        string command =
-            "$driveLetter = '" + driveLetter.Replace("'", "") + "'; " +
-            "$driveDisk = $null; " +
-            "try { $driveDisk = Get-Partition -DriveLetter $driveLetter -ErrorAction Stop | Get-Disk -ErrorAction Stop } catch {}; " +
-            "if ($driveDisk) { 'DRIVE=' + [string]$driveDisk.SerialNumber }; " +
-            "Get-Disk | ForEach-Object { 'SERIAL=' + [string]$_.SerialNumber }";
-        string output = RunHiddenProcess("powershell.exe", "-NoProfile -Command " + Quote(command), 5000);
-        string driveSerial = string.Empty;
-        List<string> connected = new List<string>();
-
-        foreach (string rawLine in output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
-        {
-            string line = rawLine.Trim();
-            if (line.StartsWith("DRIVE=", StringComparison.OrdinalIgnoreCase))
-            {
-                driveSerial = line.Substring(6).Trim();
-            }
-            else if (line.StartsWith("SERIAL=", StringComparison.OrdinalIgnoreCase))
-            {
-                string serial = NormalizeSerial(line.Substring(7));
-                if (serial.Length > 0 && !connected.Contains(serial))
-                {
-                    connected.Add(serial);
-                }
-            }
-        }
-
-        return new DiskSerialResult(driveSerial, connected);
     }
 
     private async Task RunPowerShellScriptAsync(string scriptName, string extraArguments)
@@ -459,15 +481,13 @@ internal sealed class BackendControlForm : Form
 internal sealed class GalleryConfig
 {
     public readonly int Port;
-    public readonly string DriveLetter;
-    public readonly string MediaRoot;
+    public readonly string MediaFolderName;
     public readonly string ExpectedDiskSerial;
 
-    private GalleryConfig(int port, string driveLetter, string mediaRoot, string expectedDiskSerial)
+    private GalleryConfig(int port, string mediaFolderName, string expectedDiskSerial)
     {
         Port = port;
-        DriveLetter = driveLetter;
-        MediaRoot = mediaRoot;
+        MediaFolderName = mediaFolderName;
         ExpectedDiskSerial = expectedDiskSerial;
     }
 
@@ -494,11 +514,11 @@ internal sealed class GalleryConfig
 
         int parsedPort;
         int port = values.ContainsKey("PORT") && int.TryParse(values["PORT"], out parsedPort) ? parsedPort : 8787;
-        string mediaRoot = values.ContainsKey("GALLERY_ROOT") ? values["GALLERY_ROOT"] : @"F:\影像备份";
-        string drive = values.ContainsKey("GALLERY_DRIVE") ? values["GALLERY_DRIVE"] : Path.GetPathRoot(mediaRoot).Replace(":", "").Replace("\\", "");
-        if (string.IsNullOrWhiteSpace(drive)) drive = "F";
+        string configuredRoot = values.ContainsKey("GALLERY_ROOT") ? values["GALLERY_ROOT"] : string.Empty;
+        string mediaFolderName = values.ContainsKey("GALLERY_MEDIA_FOLDER") ? values["GALLERY_MEDIA_FOLDER"] : Path.GetFileName(configuredRoot.TrimEnd('\\', '/'));
+        if (string.IsNullOrWhiteSpace(mediaFolderName)) mediaFolderName = "影像备份";
         string serial = values.ContainsKey("GALLERY_DISK_SERIAL") ? values["GALLERY_DISK_SERIAL"] : string.Empty;
-        return new GalleryConfig(port, drive.Trim().Substring(0, 1).ToUpperInvariant(), mediaRoot, serial);
+        return new GalleryConfig(port, mediaFolderName, serial);
     }
 }
 
@@ -517,12 +537,12 @@ internal sealed class DriveCheckResult
 internal sealed class DiskSerialResult
 {
     public readonly string DriveSerial;
-    public readonly List<string> ConnectedSerials;
+    public readonly string DriveLetter;
 
-    public DiskSerialResult(string driveSerial, List<string> connectedSerials)
+    public DiskSerialResult(string driveSerial, string driveLetter)
     {
         DriveSerial = driveSerial;
-        ConnectedSerials = connectedSerials;
+        DriveLetter = driveLetter;
     }
 }
 

@@ -16,7 +16,7 @@ if (-not (Test-Path $envFile)) {
   @(
     'PORT=8787',
     'HOST=0.0.0.0',
-    'GALLERY_DRIVE=F',
+    'GALLERY_MEDIA_FOLDER=影像备份',
     'GALLERY_DISK_SERIAL=REPLACE_WITH_DISK_SERIAL'
   ) | Where-Object { $_ } | Set-Content -LiteralPath $envFile -Encoding UTF8
 }
