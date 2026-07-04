@@ -757,6 +757,51 @@ h2 {
   padding: 12px;
 }
 
+.upload-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.upload-progress[hidden] {
+  display: none;
+}
+
+.upload-progress-track {
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.05)),
+    rgba(3, 5, 10, 0.48);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    0 1px 0 rgba(255, 255, 255, 0.14) inset;
+}
+
+.upload-progress-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg, rgba(102, 217, 255, 0.98), rgba(183, 241, 160, 0.96)),
+    rgba(255, 255, 255, 0.18);
+  box-shadow: 0 0 22px rgba(102, 217, 255, 0.36);
+  transition: width 180ms ease;
+}
+
+.upload-progress > span {
+  min-width: 44px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .upload-status {
   min-height: 20px;
   color: var(--muted);

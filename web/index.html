@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>zxn's Photo Gallery</title>
-    <link rel="stylesheet" href="./styles.css?v=20260704-31" />
+    <link rel="stylesheet" href="./styles.css?v=20260704-32" />
   </head>
   <body>
     <main class="shell">
@@ -67,12 +67,18 @@
           <span>选择文件</span>
           <input id="uploadFilesInput" name="files" type="file" multiple accept="image/*,video/*" required />
         </label>
+        <div id="uploadProgress" class="upload-progress" hidden>
+          <div class="upload-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="uploadProgressBar"></span>
+          </div>
+          <span id="uploadProgressText">0%</span>
+        </div>
         <p id="uploadStatus" class="upload-status"></p>
         <button id="submitUploadButton" class="primary-control" type="submit">开始上传</button>
       </form>
     </dialog>
 
-    <script src="./config.js?v=20260704-31"></script>
-    <script type="module" src="./app.js?v=20260704-31"></script>
+    <script src="./config.js?v=20260704-32"></script>
+    <script type="module" src="./app.js?v=20260704-32"></script>
   </body>
 </html>

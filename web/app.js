@@ -56,6 +56,10 @@ const elements = {
   newFolderInput: document.querySelector('#newFolderInput'),
   uploadPasswordInput: document.querySelector('#uploadPasswordInput'),
   uploadFilesInput: document.querySelector('#uploadFilesInput'),
+  uploadProgress: document.querySelector('#uploadProgress'),
+  uploadProgressTrack: document.querySelector('#uploadProgress .upload-progress-track'),
+  uploadProgressBar: document.querySelector('#uploadProgressBar'),
+  uploadProgressText: document.querySelector('#uploadProgressText'),
   uploadStatus: document.querySelector('#uploadStatus'),
   submitUploadButton: document.querySelector('#submitUploadButton')
 };
@@ -86,6 +90,59 @@ async function requestJson(path, params) {
   return response.json();
 }
 
+function setUploadProgress(percent, isVisible = true) {
+  const safePercent = Math.min(Math.max(Math.round(percent), 0), 100);
+  elements.uploadProgress.hidden = !isVisible;
+  elements.uploadProgressBar.style.width = `${safePercent}%`;
+  elements.uploadProgressText.textContent = `${safePercent}%`;
+  elements.uploadProgressTrack.setAttribute('aria-valuenow', String(safePercent));
+}
+
+function resetUploadProgress() {
+  setUploadProgress(0, false);
+}
+
+function uploadFormData(url, password, formData) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+
+    request.open('POST', url.toString());
+    request.setRequestHeader('X-Upload-Password', password);
+
+    request.upload.addEventListener('progress', (event) => {
+      if (!event.lengthComputable) {
+        elements.uploadProgress.hidden = false;
+        elements.uploadStatus.textContent = '正在上传...';
+        return;
+      }
+
+      const percent = Math.min(Math.round((event.loaded / event.total) * 100), 100);
+      setUploadProgress(percent);
+      elements.uploadStatus.textContent = percent >= 100 ? '上传完成，正在保存到硬盘...' : `正在上传 ${percent}%`;
+    });
+
+    request.addEventListener('load', () => {
+      let data = {};
+      try {
+        data = JSON.parse(request.responseText || '{}');
+      } catch {
+        reject(new Error(`HTTP ${request.status}`));
+        return;
+      }
+
+      if (request.status < 200 || request.status >= 300 || !data.ok) {
+        reject(new Error(data.details || data.error || `HTTP ${request.status}`));
+        return;
+      }
+      resolve(data);
+    });
+
+    request.addEventListener('error', () => reject(new Error('上传连接失败。')));
+    request.addEventListener('abort', () => reject(new Error('上传已取消。')));
+    request.send(formData);
+  });
+}
+
 async function uploadFiles() {
   const files = Array.from(elements.uploadFilesInput.files || []);
   const password = elements.uploadPasswordInput.value;
@@ -105,7 +162,8 @@ async function uploadFiles() {
   }
 
   elements.submitUploadButton.disabled = true;
-  elements.uploadStatus.textContent = '正在上传...';
+  setUploadProgress(0);
+  elements.uploadStatus.textContent = '正在准备上传...';
 
   try {
     const formData = new FormData();
@@ -113,20 +171,10 @@ async function uploadFiles() {
       formData.append('files', file, file.name);
     }
 
-    const response = await fetch(apiUrl('/api/upload', { folder, newFolder }), {
-      method: 'POST',
-      headers: {
-        'X-Upload-Password': password
-      },
-      body: formData
-    });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok) {
-      throw new Error(data.details || data.error || `HTTP ${response.status}`);
-    }
+    const data = await uploadFormData(apiUrl('/api/upload', { folder, newFolder }), password, formData);
 
     const uploadSuccessMessage = `上传完成：${data.count} 个文件。`;
+    setUploadProgress(100);
     elements.uploadStatus.textContent = uploadSuccessMessage;
     elements.uploadPasswordInput.value = '';
     elements.uploadFilesInput.value = '';
@@ -1037,6 +1085,7 @@ async function openUploadDialog() {
   elements.uploadPasswordInput.value = '';
   elements.uploadFilesInput.value = '';
   elements.uploadStatus.textContent = '';
+  resetUploadProgress();
   populateUploadFolders(selectedPath);
   elements.uploadDialog.showModal();
   await loadUploadFolders(selectedPath);
