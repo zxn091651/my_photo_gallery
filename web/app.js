@@ -760,7 +760,45 @@ function renderMediaDeck() {
   downloadLink.href = apiUrl(currentMediaFile().downloadUrl).toString();
   downloadLink.setAttribute('download', currentMediaFile().name);
 
-  controls.append(downloadLink);
+  const jumpForm = document.createElement('form');
+  jumpForm.className = 'deck-jump';
+  jumpForm.setAttribute('aria-label', '跳转到指定序号');
+
+  const jumpInput = document.createElement('input');
+  jumpInput.type = 'number';
+  jumpInput.inputMode = 'numeric';
+  jumpInput.min = '1';
+  jumpInput.max = String(state.mediaFiles.length);
+  jumpInput.placeholder = '序号';
+  jumpInput.value = String(state.activeMediaIndex + 1);
+  jumpInput.setAttribute('aria-label', `输入 1 到 ${state.mediaFiles.length} 之间的照片序号`);
+
+  const jumpButton = document.createElement('button');
+  jumpButton.type = 'submit';
+  jumpButton.textContent = '查看';
+
+  jumpForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const targetIndex = Number(jumpInput.value);
+    const isValidIndex = Number.isInteger(targetIndex) && targetIndex >= 1 && targetIndex <= state.mediaFiles.length;
+    jumpInput.classList.toggle('is-invalid', !isValidIndex);
+    jumpInput.setAttribute('aria-invalid', String(!isValidIndex));
+    if (!isValidIndex) {
+      jumpInput.setCustomValidity(`请输入 1 到 ${state.mediaFiles.length} 之间的序号`);
+      jumpInput.reportValidity();
+      return;
+    }
+    setActiveMediaIndex(targetIndex - 1);
+  });
+
+  jumpInput.addEventListener('input', () => {
+    jumpInput.classList.remove('is-invalid');
+    jumpInput.removeAttribute('aria-invalid');
+    jumpInput.setCustomValidity('');
+  });
+
+  jumpForm.append(jumpInput, jumpButton);
+  controls.append(downloadLink, jumpForm);
   deckShell.append(deck, controls);
   elements.mediaGrid.append(deckShell);
   scheduleThumbnailPreload();

@@ -558,16 +558,70 @@ h2 {
 
 .deck-controls {
   display: flex;
-  justify-content: center;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding-bottom: max(0px, env(safe-area-inset-bottom));
 }
 
 .deck-controls button,
 .deck-controls .button-link {
-  min-width: min(240px, 72%);
+  min-width: 0;
   min-height: 48px;
   padding: 0 22px;
   font-weight: 800;
+}
+
+.deck-controls .button-link {
+  flex: 0 0 auto;
+  min-width: min(148px, 38vw);
+}
+
+.deck-jump {
+  flex: 0 1 min(250px, 58vw);
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.06)),
+    rgba(255, 255, 255, 0.05);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.22),
+    0 1px 0 rgba(255, 255, 255, 0.16) inset;
+  backdrop-filter: blur(22px) saturate(1.45);
+  -webkit-backdrop-filter: blur(22px) saturate(1.45);
+}
+
+.deck-jump input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 0;
+  border-radius: 999px;
+  outline: none;
+  background: rgba(3, 5, 10, 0.42);
+  color: var(--ink);
+  padding: 0 10px;
+  text-align: center;
+  font: inherit;
+  font-weight: 800;
+}
+
+.deck-jump input.is-invalid {
+  color: #fff;
+  background: rgba(255, 111, 145, 0.2);
+  box-shadow: 0 0 0 1px rgba(255, 111, 145, 0.66) inset;
+}
+
+.deck-jump button {
+  min-height: 38px;
+  padding: 0 14px;
+  box-shadow: none;
 }
 
 .primary-control {
@@ -824,6 +878,20 @@ h2 {
     font-size: 14px;
   }
 
+  .deck-jump {
+    gap: 6px;
+  }
+
+  .deck-jump input {
+    height: 36px;
+    padding: 0 8px;
+  }
+
+  .deck-jump button {
+    min-height: 36px;
+    padding: 0 12px;
+  }
+
   .viewer {
     width: 100vw;
     height: 100svh;
@@ -851,4 +919,21 @@ h2 {
     min-height: min(64svh, 560px);
   }
 
+  .deck-controls {
+    gap: 8px;
+  }
+
+  .deck-controls .button-link {
+    min-width: 104px;
+    padding: 0 14px;
+  }
+
+  .deck-jump {
+    flex-basis: calc(100% - 112px);
+    grid-template-columns: minmax(54px, 1fr) auto;
+  }
+
+  .deck-jump button {
+    padding: 0 10px;
+  }
 }
