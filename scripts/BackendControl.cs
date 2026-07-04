@@ -16,6 +16,8 @@ internal static class BackendControlProgram
     [STAThread]
     private static void Main()
     {
+        ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+        ServicePointManager.Expect100Continue = false;
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(new BackendControlForm());
