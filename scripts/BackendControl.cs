@@ -671,7 +671,7 @@ internal sealed class BackendControlForm : Form
         {
             tunnelCombo.SelectedIndex = selectedIndex;
         }
-        else if (selected.Length > 0)
+        else if (selected.Length > 0 && File.Exists(selected))
         {
             tunnelCombo.Text = selected;
         }
@@ -688,11 +688,11 @@ internal sealed class BackendControlForm : Form
         List<TunnelConfigOption> options = new List<TunnelConfigOption>();
         string appDataConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "net.chmlfrp.launcher");
 
-        AddTunnelOption(options, config.FrpcConfigPath, "已保存的隧道", false);
+        AddTunnelOption(options, config.FrpcConfigPath, "已保存的隧道", false, false);
 
         foreach (FrpcProcessInfo frpc in GetRunningFrpcProcesses())
         {
-            AddTunnelOption(options, ExtractFrpcConfigPath(frpc.CommandLine), "当前运行隧道", true);
+            AddTunnelOption(options, ExtractFrpcConfigPath(frpc.CommandLine), "当前运行隧道", true, true);
         }
 
         AddRunningLauncherTunnelIds(options, appDataConfigDir);
@@ -714,7 +714,7 @@ internal sealed class BackendControlForm : Form
         {
             foreach (string file in Directory.GetFiles(directory, "*.ini", SearchOption.TopDirectoryOnly))
             {
-                AddTunnelOption(options, file, "隧道", false);
+                AddTunnelOption(options, file, "隧道", false, false);
             }
         }
         catch {}
@@ -745,13 +745,14 @@ internal sealed class BackendControlForm : Form
             {
                 string id = match.Groups["id"].Value;
                 string path = Path.Combine(appDataConfigDir, "g_" + id + ".ini");
-                AddTunnelOption(options, path, prefix, string.Equals(prefix, "当前运行隧道", StringComparison.OrdinalIgnoreCase));
+                bool running = string.Equals(prefix, "当前运行隧道", StringComparison.OrdinalIgnoreCase);
+                AddTunnelOption(options, path, prefix, running, running);
             }
         }
         catch {}
     }
 
-    private static void AddTunnelOption(List<TunnelConfigOption> options, string pathValue, string prefix, bool running)
+    private static void AddTunnelOption(List<TunnelConfigOption> options, string pathValue, string prefix, bool running, bool allowMissing)
     {
         if (string.IsNullOrWhiteSpace(pathValue))
         {
@@ -759,6 +760,11 @@ internal sealed class BackendControlForm : Form
         }
 
         string clean = pathValue.Trim().Trim('"');
+        if (!allowMissing && !File.Exists(clean))
+        {
+            return;
+        }
+
         foreach (TunnelConfigOption existing in options)
         {
             if (string.Equals(NormalizePath(existing.ConfigPath), NormalizePath(clean), StringComparison.OrdinalIgnoreCase))
