@@ -30,6 +30,10 @@ internal sealed class BackendControlForm : Form
     private readonly string localStatusUrl;
     private readonly StatusPill overallPill;
     private readonly ChainView chainView;
+    private readonly ComboBox tunnelCombo;
+    private readonly ToolTip tunnelToolTip;
+    private readonly GlassButton saveTunnelButton;
+    private readonly GlassButton refreshTunnelButton;
     private readonly GlassButton startButton;
     private readonly GlassButton stopButton;
     private readonly GlassButton checkButton;
@@ -48,8 +52,8 @@ internal sealed class BackendControlForm : Form
         Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular);
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(560, 520);
-        Size = new Size(600, 560);
+        MinimumSize = new Size(620, 590);
+        Size = new Size(680, 620);
         BackColor = Color.FromArgb(8, 10, 16);
         ForeColor = Color.White;
         DoubleBuffered = true;
@@ -64,10 +68,11 @@ internal sealed class BackendControlForm : Form
         layout.Dock = DockStyle.Fill;
         layout.BackColor = Color.Transparent;
         layout.ColumnCount = 1;
-        layout.RowCount = 4;
+        layout.RowCount = 5;
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
         root.Controls.Add(layout);
 
@@ -119,12 +124,62 @@ internal sealed class BackendControlForm : Form
         );
         layout.Controls.Add(chainView, 0, 2);
 
+        Panel tunnelPanel = new Panel();
+        tunnelPanel.Dock = DockStyle.Fill;
+        tunnelPanel.BackColor = Color.Transparent;
+        layout.Controls.Add(tunnelPanel, 0, 3);
+
+        Label tunnelLabel = new Label();
+        tunnelLabel.AutoSize = true;
+        tunnelLabel.Text = "隧道配置";
+        tunnelLabel.Font = new Font(Font.FontFamily, 9F, FontStyle.Bold);
+        tunnelLabel.ForeColor = Color.FromArgb(190, 216, 226, 240);
+        tunnelLabel.Location = new Point(4, 16);
+        tunnelPanel.Controls.Add(tunnelLabel);
+
+        tunnelCombo = new ComboBox();
+        tunnelCombo.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
+        tunnelCombo.DropDownStyle = ComboBoxStyle.DropDown;
+        tunnelCombo.Width = 330;
+        tunnelCombo.Height = 28;
+        tunnelCombo.Location = new Point(78, 12);
+        tunnelCombo.Font = new Font(Font.FontFamily, 9F, FontStyle.Regular);
+        tunnelPanel.Controls.Add(tunnelCombo);
+        tunnelToolTip = new ToolTip();
+        tunnelCombo.SelectedIndexChanged += delegate { UpdateTunnelToolTip(); };
+        tunnelCombo.TextChanged += delegate { UpdateTunnelToolTip(); };
+
+        refreshTunnelButton = new GlassButton("刷新", false);
+        refreshTunnelButton.Width = 76;
+        refreshTunnelButton.Height = 36;
+        refreshTunnelButton.Location = new Point(tunnelPanel.Width - 166, 8);
+        refreshTunnelButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        tunnelPanel.Controls.Add(refreshTunnelButton);
+
+        saveTunnelButton = new GlassButton("保存", false);
+        saveTunnelButton.Width = 76;
+        saveTunnelButton.Height = 36;
+        saveTunnelButton.Location = new Point(tunnelPanel.Width - 82, 8);
+        saveTunnelButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        tunnelPanel.Controls.Add(saveTunnelButton);
+
+        tunnelPanel.Resize += delegate
+        {
+            tunnelCombo.Width = Math.Max(160, tunnelPanel.Width - 254);
+            refreshTunnelButton.Location = new Point(tunnelPanel.Width - 166, 8);
+            saveTunnelButton.Location = new Point(tunnelPanel.Width - 82, 8);
+        };
+
+        refreshTunnelButton.Click += delegate { LoadTunnelOptions(); };
+        saveTunnelButton.Click += async delegate { await SaveSelectedTunnelConfigAsync(); };
+        LoadTunnelOptions();
+
         FlowLayoutPanel actions = new FlowLayoutPanel();
         actions.Dock = DockStyle.Fill;
         actions.BackColor = Color.Transparent;
         actions.WrapContents = false;
         actions.FlowDirection = FlowDirection.LeftToRight;
-        layout.Controls.Add(actions, 0, 3);
+        layout.Controls.Add(actions, 0, 4);
 
         startButton = new GlassButton("启动后端", true);
         stopButton = new GlassButton("停止后端", false);
@@ -189,6 +244,7 @@ internal sealed class BackendControlForm : Form
         }
 
         SetBusy(true, "正在启动后端", "移动硬盘已就绪，正在直接启动 frpc 隧道。");
+        await SaveSelectedTunnelConfigAsync(false);
         await StartFrpcAsync();
         await RunPowerShellScriptAsync("start-gallery.ps1", "-ProjectRoot " + Quote(projectRoot));
         await Task.Delay(1600);
@@ -478,9 +534,15 @@ internal sealed class BackendControlForm : Form
 
     private async Task StartFrpcAsync()
     {
+        string selectedConfigPath = GetSelectedTunnelConfigPath();
         await Task.Run(delegate
         {
-            if (IsProcessRunning("frpc"))
+            if (selectedConfigPath.Length == 0 || !File.Exists(selectedConfigPath))
+            {
+                return;
+            }
+
+            if (IsFrpcRunningForConfig(selectedConfigPath))
             {
                 return;
             }
@@ -490,14 +552,9 @@ internal sealed class BackendControlForm : Form
                 return;
             }
 
-            if (config.FrpcConfigPath.Length == 0 || !File.Exists(config.FrpcConfigPath))
-            {
-                return;
-            }
-
             ProcessStartInfo startInfo = new ProcessStartInfo();
             startInfo.FileName = config.FrpcPath;
-            startInfo.Arguments = "-c " + Quote(config.FrpcConfigPath);
+            startInfo.Arguments = "-c " + Quote(selectedConfigPath);
             startInfo.WorkingDirectory = Path.GetDirectoryName(config.FrpcPath);
             startInfo.CreateNoWindow = true;
             startInfo.UseShellExecute = false;
@@ -510,22 +567,26 @@ internal sealed class BackendControlForm : Form
 
     private async Task StopFrpcAsync()
     {
+        string selectedConfigPath = GetSelectedTunnelConfigPath();
         await Task.Run(delegate
         {
             try
             {
-                foreach (Process process in Process.GetProcessesByName("frpc"))
+                foreach (FrpcProcessInfo frpc in GetRunningFrpcProcesses())
                 {
+                    if (selectedConfigPath.Length == 0 || !CommandLineUsesConfig(frpc.CommandLine, selectedConfigPath))
+                    {
+                        continue;
+                    }
+
                     try
                     {
+                        Process process = Process.GetProcessById(frpc.ProcessId);
                         process.Kill();
                         process.WaitForExit(4000);
-                    }
-                    catch {}
-                    finally
-                    {
                         process.Dispose();
                     }
+                    catch {}
                 }
             }
             catch {}
@@ -544,6 +605,376 @@ internal sealed class BackendControlForm : Form
         await Task.Delay(1200);
         await StartFrpcAsync();
         await Task.Delay(3500);
+    }
+
+    private string GetSelectedTunnelConfigPath()
+    {
+        TunnelConfigOption selectedOption = tunnelCombo.SelectedItem as TunnelConfigOption;
+        if (selectedOption != null)
+        {
+            return selectedOption.ConfigPath;
+        }
+
+        string selectedText = tunnelCombo.Text == null ? string.Empty : tunnelCombo.Text.Trim().Trim('"');
+        foreach (object item in tunnelCombo.Items)
+        {
+            TunnelConfigOption option = item as TunnelConfigOption;
+            if (option != null && string.Equals(option.DisplayName, selectedText, StringComparison.OrdinalIgnoreCase))
+            {
+                return option.ConfigPath;
+            }
+        }
+
+        return selectedText;
+    }
+
+    private void LoadTunnelOptions()
+    {
+        string selected = GetSelectedTunnelConfigPath();
+        if (selected.Length == 0)
+        {
+            selected = config.FrpcConfigPath;
+        }
+
+        List<TunnelConfigOption> options = DiscoverTunnelConfigs();
+        tunnelCombo.Items.Clear();
+        int selectedIndex = -1;
+        for (int index = 0; index < options.Count; index++)
+        {
+            TunnelConfigOption option = options[index];
+            tunnelCombo.Items.Add(option);
+            if (selected.Length > 0 && string.Equals(NormalizePath(option.ConfigPath), NormalizePath(selected), StringComparison.OrdinalIgnoreCase))
+            {
+                selectedIndex = index;
+            }
+        }
+
+        if (selectedIndex >= 0)
+        {
+            tunnelCombo.SelectedIndex = selectedIndex;
+        }
+        else if (selected.Length > 0)
+        {
+            tunnelCombo.Text = selected;
+        }
+        else if (tunnelCombo.Items.Count > 0)
+        {
+            tunnelCombo.SelectedIndex = 0;
+        }
+
+        UpdateTunnelToolTip();
+    }
+
+    private List<TunnelConfigOption> DiscoverTunnelConfigs()
+    {
+        List<TunnelConfigOption> options = new List<TunnelConfigOption>();
+        string appDataConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "net.chmlfrp.launcher");
+
+        AddTunnelOption(options, config.FrpcConfigPath, "已保存的隧道", false);
+
+        foreach (FrpcProcessInfo frpc in GetRunningFrpcProcesses())
+        {
+            AddTunnelOption(options, ExtractFrpcConfigPath(frpc.CommandLine), "当前运行隧道", true);
+        }
+
+        AddLauncherTunnelIds(options, appDataConfigDir);
+        AddConfigFiles(options, appDataConfigDir);
+        AddConfigFiles(options, Path.Combine(projectRoot, "tunnels"));
+        AddConfigFiles(options, projectRoot);
+
+        return options;
+    }
+
+    private static void AddConfigFiles(List<TunnelConfigOption> options, string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (string file in Directory.GetFiles(directory, "*.ini", SearchOption.TopDirectoryOnly))
+            {
+                AddTunnelOption(options, file, "隧道", false);
+            }
+        }
+        catch {}
+    }
+
+    private static void AddLauncherTunnelIds(List<TunnelConfigOption> options, string appDataConfigDir)
+    {
+        if (string.IsNullOrWhiteSpace(appDataConfigDir) || !Directory.Exists(appDataConfigDir))
+        {
+            return;
+        }
+
+        AddTunnelIdsFromJson(options, Path.Combine(appDataConfigDir, "running_tunnels.json"), appDataConfigDir, "当前运行隧道");
+        AddTunnelIdsFromJson(options, Path.Combine(appDataConfigDir, "tunnel_auto_start.json"), appDataConfigDir, "隧道");
+    }
+
+    private static void AddTunnelIdsFromJson(List<TunnelConfigOption> options, string jsonPath, string appDataConfigDir, string prefix)
+    {
+        if (!File.Exists(jsonPath))
+        {
+            return;
+        }
+
+        try
+        {
+            string text = File.ReadAllText(jsonPath, Encoding.UTF8);
+            MatchCollection matches = Regex.Matches(text, "\"(?:api_)?(?<id>\\d+)\"\\s*:", RegexOptions.IgnoreCase);
+            foreach (Match match in matches)
+            {
+                string id = match.Groups["id"].Value;
+                string path = Path.Combine(appDataConfigDir, "g_" + id + ".ini");
+                AddTunnelOption(options, path, prefix, string.Equals(prefix, "当前运行隧道", StringComparison.OrdinalIgnoreCase));
+            }
+        }
+        catch {}
+    }
+
+    private static void AddTunnelOption(List<TunnelConfigOption> options, string pathValue, string prefix, bool running)
+    {
+        if (string.IsNullOrWhiteSpace(pathValue))
+        {
+            return;
+        }
+
+        string clean = pathValue.Trim().Trim('"');
+        foreach (TunnelConfigOption existing in options)
+        {
+            if (string.Equals(NormalizePath(existing.ConfigPath), NormalizePath(clean), StringComparison.OrdinalIgnoreCase))
+            {
+                if (running)
+                {
+                    existing.MarkRunning();
+                }
+                return;
+            }
+        }
+
+        options.Add(new TunnelConfigOption(BuildTunnelDisplayName(clean, prefix, running), clean, File.Exists(clean), running));
+    }
+
+    private static string BuildTunnelDisplayName(string pathValue, string prefix, bool running)
+    {
+        string tunnelName = ReadTunnelNameFromIni(pathValue);
+        string id = ExtractTunnelId(pathValue);
+        string statePrefix = running ? "当前运行隧道" : prefix;
+
+        if (tunnelName.Length > 0 && id.Length > 0)
+        {
+            return statePrefix + "：" + tunnelName + "（" + id + "）";
+        }
+
+        if (tunnelName.Length > 0)
+        {
+            return statePrefix + "：" + tunnelName;
+        }
+
+        if (id.Length > 0)
+        {
+            return statePrefix + " " + id;
+        }
+
+        return statePrefix + "：" + Path.GetFileName(pathValue);
+    }
+
+    private static string ReadTunnelNameFromIni(string pathValue)
+    {
+        if (string.IsNullOrWhiteSpace(pathValue) || !File.Exists(pathValue))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            string firstProxySection = string.Empty;
+            foreach (string rawLine in File.ReadAllLines(pathValue, Encoding.UTF8))
+            {
+                string line = rawLine.Trim();
+                if (line.Length == 0 || line.StartsWith("#") || line.StartsWith(";"))
+                {
+                    continue;
+                }
+
+                Match section = Regex.Match(line, "^\\[(?<name>[^\\]]+)\\]$");
+                if (section.Success)
+                {
+                    string sectionName = section.Groups["name"].Value.Trim();
+                    if (!string.Equals(sectionName, "common", StringComparison.OrdinalIgnoreCase) && firstProxySection.Length == 0)
+                    {
+                        firstProxySection = sectionName;
+                    }
+                    continue;
+                }
+
+                Match keyValue = Regex.Match(line, "^(name|tunnel_name|tunnelName|proxy_name|remark|description)\\s*=\\s*(?<value>.+)$", RegexOptions.IgnoreCase);
+                if (keyValue.Success)
+                {
+                    string value = keyValue.Groups["value"].Value.Trim().Trim('"');
+                    if (value.Length > 0)
+                    {
+                        return value;
+                    }
+                }
+            }
+
+            return firstProxySection;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string ExtractTunnelId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        Match match = Regex.Match(value, "(?:g_|api_)(?<id>\\d+)", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups["id"].Value : string.Empty;
+    }
+
+    private void UpdateTunnelToolTip()
+    {
+        TunnelConfigOption selectedOption = tunnelCombo.SelectedItem as TunnelConfigOption;
+        if (selectedOption != null)
+        {
+            tunnelToolTip.SetToolTip(tunnelCombo, selectedOption.ConfigPath);
+            return;
+        }
+
+        string selected = tunnelCombo.Text == null ? string.Empty : tunnelCombo.Text.Trim();
+        tunnelToolTip.SetToolTip(tunnelCombo, selected);
+    }
+
+    private async Task SaveSelectedTunnelConfigAsync()
+    {
+        await SaveSelectedTunnelConfigAsync(true);
+    }
+
+    private async Task SaveSelectedTunnelConfigAsync(bool showMessage)
+    {
+        string selected = GetSelectedTunnelConfigPath();
+        if (selected.Length == 0)
+        {
+            if (showMessage)
+            {
+                overallPill.SetState(StatusKind.Bad, "没有选择隧道", "请先选择或填写 frpc ini 配置路径。");
+            }
+            return;
+        }
+
+        await Task.Run(delegate
+        {
+            SaveEnvValue("CHMLFRP_CONFIG_PATH", selected);
+        });
+
+        if (showMessage)
+        {
+            overallPill.SetState(
+                File.Exists(selected) ? StatusKind.Good : StatusKind.Warning,
+                "隧道配置已保存",
+                File.Exists(selected) ? selected : "已保存，但当前找不到这个 ini 文件。"
+            );
+        }
+    }
+
+    private void SaveEnvValue(string key, string value)
+    {
+        string envPath = Path.Combine(projectRoot, ".env");
+        List<string> lines = new List<string>();
+        if (File.Exists(envPath))
+        {
+            lines.AddRange(File.ReadAllLines(envPath, Encoding.UTF8));
+        }
+
+        bool updated = false;
+        for (int index = 0; index < lines.Count; index++)
+        {
+            string line = lines[index].Trim();
+            if (line.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
+            {
+                lines[index] = key + "=" + value;
+                updated = true;
+                break;
+            }
+        }
+
+        if (!updated)
+        {
+            lines.Add(key + "=" + value);
+        }
+
+        File.WriteAllLines(envPath, lines.ToArray(), Encoding.UTF8);
+    }
+
+    private bool IsFrpcRunningForConfig(string configPath)
+    {
+        foreach (FrpcProcessInfo frpc in GetRunningFrpcProcesses())
+        {
+            if (CommandLineUsesConfig(frpc.CommandLine, configPath))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool CommandLineUsesConfig(string commandLine, string configPath)
+    {
+        string activeConfig = ExtractFrpcConfigPath(commandLine);
+        return activeConfig.Length > 0 && string.Equals(NormalizePath(activeConfig), NormalizePath(configPath), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ExtractFrpcConfigPath(string commandLine)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return string.Empty;
+        }
+
+        Match match = Regex.Match(commandLine, "\\s-c\\s+(\"[^\"]+\"|\\S+)", RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            return string.Empty;
+        }
+
+        return match.Groups[1].Value.Trim().Trim('"');
+    }
+
+    private static string NormalizePath(string value)
+    {
+        try
+        {
+            return Path.GetFullPath(value.Trim().Trim('"'));
+        }
+        catch
+        {
+            return value.Trim().Trim('"');
+        }
+    }
+
+    private static List<FrpcProcessInfo> GetRunningFrpcProcesses()
+    {
+        List<FrpcProcessInfo> processes = new List<FrpcProcessInfo>();
+        string command = "Get-CimInstance Win32_Process -Filter \"name='frpc.exe'\" | ForEach-Object { [string]$_.ProcessId + \"`t\" + [string]$_.CommandLine }";
+        string output = RunHiddenProcess("powershell.exe", "-NoProfile -Command " + Quote(command), 6000);
+        foreach (string rawLine in output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = rawLine.Split(new[] { '\t' }, 2);
+            int pid;
+            if (parts.Length == 2 && int.TryParse(parts[0], out pid))
+            {
+                processes.Add(new FrpcProcessInfo(pid, parts[1]));
+            }
+        }
+        return processes;
     }
 
     private static bool IsProcessRunning(string processName)
@@ -754,6 +1185,50 @@ internal sealed class ConnectionResult
     {
         Ok = ok;
         Message = message;
+    }
+}
+
+internal sealed class FrpcProcessInfo
+{
+    public readonly int ProcessId;
+    public readonly string CommandLine;
+
+    public FrpcProcessInfo(int processId, string commandLine)
+    {
+        ProcessId = processId;
+        CommandLine = commandLine ?? "";
+    }
+}
+
+internal sealed class TunnelConfigOption
+{
+    public readonly string DisplayName;
+    public readonly string ConfigPath;
+    public readonly bool Exists;
+    private bool isRunning;
+
+    public TunnelConfigOption(string displayName, string configPath, bool exists, bool running)
+    {
+        DisplayName = displayName ?? "";
+        ConfigPath = configPath ?? "";
+        Exists = exists;
+        isRunning = running;
+    }
+
+    public void MarkRunning()
+    {
+        isRunning = true;
+    }
+
+    public override string ToString()
+    {
+        string suffix = Exists ? "" : "（ini 未找到）";
+        if (isRunning && DisplayName.IndexOf("当前运行隧道", StringComparison.OrdinalIgnoreCase) < 0)
+        {
+            return "当前运行：" + DisplayName + suffix;
+        }
+
+        return DisplayName + suffix;
     }
 }
 
