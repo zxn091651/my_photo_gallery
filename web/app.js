@@ -557,6 +557,14 @@ function createVideoPlaceholder(file) {
   return placeholder;
 }
 
+function createImagePlaceholder(file) {
+  const placeholder = document.createElement('div');
+  placeholder.className = 'deck-media video-placeholder';
+  placeholder.setAttribute('aria-label', file.name);
+  placeholder.innerHTML = '<span>无法预览</span>';
+  return placeholder;
+}
+
 function createMediaElement(file, isPriority) {
   if (file.type === 'image' || file.thumbUrl) {
     const source = apiUrl(file.thumbUrl || file.viewUrl).toString();
@@ -570,6 +578,10 @@ function createMediaElement(file, isPriority) {
     if (file.type === 'video') {
       image.addEventListener('error', () => {
         image.replaceWith(createVideoPlaceholder(file));
+      }, { once: true });
+    } else {
+      image.addEventListener('error', () => {
+        image.replaceWith(createImagePlaceholder(file));
       }, { once: true });
     }
     return image;

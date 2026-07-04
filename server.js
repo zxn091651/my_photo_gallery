@@ -39,6 +39,15 @@ const HIDDEN_MEDIA_EXTENSIONS = new Set([
   '.nef'
 ]);
 
+const WEB_PREVIEW_IMAGE_EXTENSIONS = new Set([
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.webp',
+  '.bmp'
+]);
+
 const VIDEO_EXTENSIONS = new Set([
   '.mp4',
   '.webm',
@@ -497,7 +506,7 @@ async function randomPhotos(limitValue) {
       }
 
       const extension = path.extname(entry.name).toLowerCase();
-      if (!entry.isFile() || HIDDEN_MEDIA_EXTENSIONS.has(extension) || !IMAGE_EXTENSIONS.has(extension)) {
+      if (!entry.isFile() || !WEB_PREVIEW_IMAGE_EXTENSIONS.has(extension)) {
         continue;
       }
 
