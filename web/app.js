@@ -800,11 +800,13 @@ function preloadUpcomingThumbnails() {
   const preloadFiles = [];
   const seenIndexes = new Set();
 
-  for (let offset = -4; offset <= 4; offset += 1) {
+  for (let offset = -3; offset <= 3; offset += 1) {
     const index = wrappedMediaIndex(state.activeMediaIndex + offset);
     if (seenIndexes.has(index)) continue;
     seenIndexes.add(index);
-    preloadFiles.push(state.mediaFiles[index]);
+    const file = state.mediaFiles[index];
+    if (file?.usesConvertedPreview && Math.abs(offset) > 1) continue;
+    preloadFiles.push(file);
   }
 
   for (const file of preloadFiles) {

@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { stat, readdir, realpath, access, mkdir, rename, unlink, readFile } from 'node:fs/promises';
+import { stat, readdir, realpath, access, mkdir, rename, unlink, readFile, writeFile } from 'node:fs/promises';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +20,7 @@ const EXPECTED_DISK_SERIAL = normalizeDiskSerial(process.env.GALLERY_DISK_SERIAL
 const UPLOAD_PASSWORD = process.env.GALLERY_UPLOAD_PASSWORD || '';
 const WEB_ROOT = path.join(__dirname, 'web');
 const THUMB_CACHE_ROOT = path.join(__dirname, '.cache', 'thumbs');
+const CONVERTED_CACHE_ROOT = path.join(__dirname, '.cache', 'converted');
 const MAX_UPLOAD_BYTES = Number(process.env.GALLERY_MAX_UPLOAD_BYTES || 20 * 1024 * 1024 * 1024);
 
 const IMAGE_EXTENSIONS = new Set([
@@ -38,6 +39,14 @@ const IMAGE_EXTENSIONS = new Set([
 
 const HIDDEN_MEDIA_EXTENSIONS = new Set([
   '.nef'
+]);
+
+const CONVERSION_HEAVY_IMAGE_EXTENSIONS = new Set([
+  '.heic',
+  '.heif',
+  '.tif',
+  '.tiff',
+  '.avif'
 ]);
 
 const VIDEO_EXTENSIONS = new Set([
@@ -84,7 +93,7 @@ let rootRealPathCache = null;
 let rootRealPathCacheSource = '';
 let diskSerialStatusCache = null;
 let diskSerialStatusCacheAt = 0;
-const DISK_STATUS_CACHE_MS = 3000;
+const DISK_STATUS_CACHE_MS = 30_000;
 
 function normalizeDiskSerial(value = '') {
   return String(value).replace(/\s+/g, '').toUpperCase();
@@ -238,6 +247,11 @@ function isMediaFile(fileName) {
 }
 
 function mediaDescriptor(entryName, relativePath, type, fileStat) {
+  const extension = path.extname(entryName).toLowerCase();
+  const usesConvertedPreview = type === 'image' && CONVERSION_HEAVY_IMAGE_EXTENSIONS.has(extension);
+  const thumbWidth = usesConvertedPreview ? 320 : 480;
+  const previewWidthValue = usesConvertedPreview ? 1280 : 1800;
+
   return {
     name: entryName,
     path: relativePath,
@@ -245,8 +259,9 @@ function mediaDescriptor(entryName, relativePath, type, fileStat) {
     size: fileStat.size,
     modifiedAt: fileStat.mtime.toISOString(),
     viewUrl: `/api/file?path=${encodeURIComponent(relativePath)}`,
-    previewUrl: type === 'image' ? `/api/preview?path=${encodeURIComponent(relativePath)}&w=1800` : undefined,
-    thumbUrl: `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=480`,
+    previewUrl: type === 'image' ? `/api/preview?path=${encodeURIComponent(relativePath)}&w=${previewWidthValue}` : undefined,
+    thumbUrl: `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=${thumbWidth}`,
+    usesConvertedPreview,
     downloadUrl: `/api/download?path=${encodeURIComponent(relativePath)}`
   };
 }
@@ -557,19 +572,53 @@ function thumbnailCachePath(relativePath, fileStat, width, type) {
   return path.join(THUMB_CACHE_ROOT, `${hash}.webp`);
 }
 
+function convertedImageCachePath(filePath, fileStat) {
+  const key = JSON.stringify({
+    filePath,
+    size: fileStat.size,
+    mtimeMs: Math.round(fileStat.mtimeMs),
+    version: 1
+  });
+  const hash = createHash('sha256').update(key).digest('hex');
+  return path.join(CONVERTED_CACHE_ROOT, `${hash}.jpg`);
+}
+
 async function imageSharpSource(filePath) {
   const extension = path.extname(filePath).toLowerCase();
   if (extension !== '.heic' && extension !== '.heif') {
     return filePath;
   }
 
+  const fileStat = await stat(filePath);
+  const cachePath = convertedImageCachePath(filePath, fileStat);
+  try {
+    await access(cachePath, constants.F_OK);
+    return cachePath;
+  } catch {}
+
+  await mkdir(CONVERTED_CACHE_ROOT, { recursive: true });
   const buffer = await readFile(filePath);
   const jpegBuffer = await heicConvert({
     buffer,
     format: 'JPEG',
-    quality: 0.92
+    quality: 0.82
   });
-  return Buffer.from(jpegBuffer);
+  const temporaryPath = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
+
+  try {
+    await writeFile(temporaryPath, Buffer.from(jpegBuffer));
+    await rename(temporaryPath, cachePath);
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => {});
+    try {
+      await access(cachePath, constants.F_OK);
+      return cachePath;
+    } catch {
+      throw error;
+    }
+  }
+
+  return cachePath;
 }
 
 function runFfmpeg(args) {
