@@ -34,6 +34,10 @@ const IMAGE_EXTENSIONS = new Set([
   '.heif'
 ]);
 
+const HIDDEN_MEDIA_EXTENSIONS = new Set([
+  '.nef'
+]);
+
 const VIDEO_EXTENSIONS = new Set([
   '.mp4',
   '.webm',
@@ -207,6 +211,7 @@ function toRelativeUrlPath(rootPath, absolutePath) {
 
 function isMediaFile(fileName) {
   const extension = path.extname(fileName).toLowerCase();
+  if (HIDDEN_MEDIA_EXTENSIONS.has(extension)) return null;
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
   return null;
@@ -444,7 +449,8 @@ async function randomPhotos(limitValue) {
         continue;
       }
 
-      if (!entry.isFile() || !IMAGE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+      const extension = path.extname(entry.name).toLowerCase();
+      if (!entry.isFile() || HIDDEN_MEDIA_EXTENSIONS.has(extension) || !IMAGE_EXTENSIONS.has(extension)) {
         continue;
       }
 
