@@ -4,18 +4,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$sourcePath = Join-Path $PSScriptRoot 'BackendLauncher.cs'
-$startExe = Join-Path $ProjectRoot 'start-backend.exe'
-$stopExe = Join-Path $ProjectRoot 'stop-backend.exe'
+$sourcePath = Join-Path $PSScriptRoot 'BackendControl.cs'
+$controlExe = Join-Path $ProjectRoot 'gallery-backend-control.exe'
 $source = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8
+
+Remove-Item -LiteralPath $controlExe -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $ProjectRoot 'start-backend.exe') -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $ProjectRoot 'stop-backend.exe') -Force -ErrorAction SilentlyContinue
 
 Add-Type `
   -TypeDefinition $source `
   -Language CSharp `
-  -OutputAssembly $startExe `
+  -ReferencedAssemblies @('System.Windows.Forms.dll', 'System.Drawing.dll') `
+  -OutputAssembly $controlExe `
   -OutputType WindowsApplication
 
-Copy-Item -LiteralPath $startExe -Destination $stopExe -Force
-
-Write-Host "Built launcher: $startExe"
-Write-Host "Built launcher: $stopExe"
+Write-Host "Built launcher: $controlExe"
