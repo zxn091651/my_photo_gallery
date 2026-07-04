@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { stat, readdir, realpath, access, mkdir, rename, unlink } from 'node:fs/promises';
+import { stat, readdir, realpath, access, mkdir, rename, unlink, readFile } from 'node:fs/promises';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import sharp from 'sharp';
 import Busboy from 'busboy';
 import ffmpegPath from 'ffmpeg-static';
+import heicConvert from 'heic-convert';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,15 +38,6 @@ const IMAGE_EXTENSIONS = new Set([
 
 const HIDDEN_MEDIA_EXTENSIONS = new Set([
   '.nef'
-]);
-
-const WEB_PREVIEW_IMAGE_EXTENSIONS = new Set([
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.gif',
-  '.webp',
-  '.bmp'
 ]);
 
 const VIDEO_EXTENSIONS = new Set([
@@ -253,6 +245,7 @@ function mediaDescriptor(entryName, relativePath, type, fileStat) {
     size: fileStat.size,
     modifiedAt: fileStat.mtime.toISOString(),
     viewUrl: `/api/file?path=${encodeURIComponent(relativePath)}`,
+    previewUrl: type === 'image' ? `/api/preview?path=${encodeURIComponent(relativePath)}&w=1800` : undefined,
     thumbUrl: `/api/thumbnail?path=${encodeURIComponent(relativePath)}&w=480`,
     downloadUrl: `/api/download?path=${encodeURIComponent(relativePath)}`
   };
@@ -505,8 +498,8 @@ async function randomPhotos(limitValue) {
         continue;
       }
 
-      const extension = path.extname(entry.name).toLowerCase();
-      if (!entry.isFile() || !WEB_PREVIEW_IMAGE_EXTENSIONS.has(extension)) {
+      const type = isMediaFile(entry.name);
+      if (!entry.isFile() || type !== 'image') {
         continue;
       }
 
@@ -546,6 +539,12 @@ function thumbnailWidth(value) {
   return Math.min(Math.max(Math.round(width), 180), 960);
 }
 
+function previewWidth(value) {
+  const width = Number(value || 1800);
+  if (!Number.isFinite(width)) return 1800;
+  return Math.min(Math.max(Math.round(width), 480), 2400);
+}
+
 function thumbnailCachePath(relativePath, fileStat, width, type) {
   const key = JSON.stringify({
     relativePath,
@@ -556,6 +555,21 @@ function thumbnailCachePath(relativePath, fileStat, width, type) {
   });
   const hash = createHash('sha256').update(key).digest('hex');
   return path.join(THUMB_CACHE_ROOT, `${hash}.webp`);
+}
+
+async function imageSharpSource(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension !== '.heic' && extension !== '.heif') {
+    return filePath;
+  }
+
+  const buffer = await readFile(filePath);
+  const jpegBuffer = await heicConvert({
+    buffer,
+    format: 'JPEG',
+    quality: 0.92
+  });
+  return Buffer.from(jpegBuffer);
 }
 
 function runFfmpeg(args) {
@@ -638,7 +652,7 @@ async function streamThumbnail(request, response, relativePath, widthValue) {
     await mkdir(THUMB_CACHE_ROOT, { recursive: true });
     try {
       if (mediaType === 'image') {
-        await sharp(filePath, { failOn: 'none', pages: 1 })
+        await sharp(await imageSharpSource(filePath), { failOn: 'none', pages: 1 })
           .rotate()
           .resize({
             width,
@@ -653,6 +667,55 @@ async function streamThumbnail(request, response, relativePath, widthValue) {
       }
     } catch {
       sendError(response, 422, 'Thumbnail could not be generated.');
+      return;
+    }
+  }
+
+  const cacheStat = await stat(cachePath);
+  writeCors(response);
+  response.writeHead(200, {
+    'Content-Type': 'image/webp',
+    'Content-Length': cacheStat.size,
+    'Cache-Control': 'private, max-age=604800, immutable'
+  });
+
+  if (request.method === 'HEAD') {
+    response.end();
+    return;
+  }
+
+  createReadStream(cachePath).pipe(response);
+}
+
+async function streamPreview(request, response, relativePath, widthValue) {
+  const filePath = await resolveInsideMediaRoot(relativePath);
+  const fileStat = await stat(filePath);
+
+  if (!fileStat.isFile() || isMediaFile(path.basename(filePath)) !== 'image') {
+    sendError(response, 404, 'Image not found.');
+    return;
+  }
+
+  const width = previewWidth(widthValue);
+  const cachePath = thumbnailCachePath(relativePath, fileStat, width, 'image-preview');
+
+  try {
+    await access(cachePath, constants.F_OK);
+  } catch {
+    await mkdir(THUMB_CACHE_ROOT, { recursive: true });
+    try {
+      await sharp(await imageSharpSource(filePath), { failOn: 'none', pages: 1 })
+        .rotate()
+        .resize({
+          width,
+          height: Math.round(width * 1.45),
+          fit: 'inside',
+          withoutEnlargement: true
+        })
+        .webp({ quality: 78, effort: 2 })
+        .toFile(cachePath);
+    } catch {
+      sendError(response, 422, 'Preview could not be generated.');
       return;
     }
   }
@@ -969,6 +1032,16 @@ async function handleApi(request, response, requestUrl) {
         return;
       }
       await streamThumbnail(request, response, filePath, requestUrl.searchParams.get('w'));
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/preview') {
+      const filePath = requestUrl.searchParams.get('path');
+      if (!filePath) {
+        sendError(response, 400, 'Missing file path.');
+        return;
+      }
+      await streamPreview(request, response, filePath, requestUrl.searchParams.get('w'));
       return;
     }
 

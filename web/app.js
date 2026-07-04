@@ -1010,7 +1010,7 @@ function openViewer(file) {
   elements.viewerTitle.textContent = file.name;
   elements.viewerStage.replaceChildren();
 
-  const source = apiUrl(file.viewUrl).toString();
+  const source = apiUrl(file.previewUrl || file.viewUrl).toString();
   const downloadUrl = apiUrl(file.downloadUrl).toString();
   elements.downloadLink.href = downloadUrl;
   elements.downloadLink.setAttribute('download', file.name);
@@ -1019,6 +1019,9 @@ function openViewer(file) {
     const image = document.createElement('img');
     image.alt = file.name;
     image.src = source;
+    image.addEventListener('error', () => {
+      image.replaceWith(createImagePlaceholder(file));
+    }, { once: true });
     elements.viewerStage.append(image);
   } else {
     const video = document.createElement('video');
