@@ -295,6 +295,19 @@ h2 {
   overflow: hidden;
 }
 
+.folder-measure {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  z-index: -1;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .folder-pager {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto auto;

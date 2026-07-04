@@ -13,7 +13,7 @@ function isLocalBackendUrl(value) {
 const safeStoredApiBase = isHostedFrontend && isLocalBackendUrl(storedApiBase) ? '' : storedApiBase;
 const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 const isHttpsPage = window.location.protocol === 'https:';
-const FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 7 : 13;
+const DEFAULT_FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 7 : 13;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const TAP_SLOP = 2;
 
@@ -22,12 +22,14 @@ const state = {
   folders: [],
   uploadFolders: [],
   folderPage: 0,
+  folderPageSize: DEFAULT_FOLDER_PAGE_SIZE,
   currentFolder: '',
   isRandomMode: false,
   mediaFiles: [],
   activeMediaIndex: 0,
   deckAnimation: null,
   preloadTimer: null,
+  resizeTimer: null,
   heartbeatInFlight: false,
   drag: null
 };
@@ -244,7 +246,7 @@ function pageLabel(pageIndex) {
 }
 
 function setFolderPage(pageIndex) {
-  const pageCount = Math.max(1, Math.ceil(state.folders.length / FOLDER_PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(state.folders.length / state.folderPageSize));
   state.folderPage = Math.min(Math.max(pageIndex, 0), pageCount - 1);
   renderFolderGallery(state.folders);
 }
@@ -314,14 +316,61 @@ function renderFolderPager(pageCount) {
   return pager;
 }
 
+function measureFolderPageSize(gallery, folderList) {
+  if (!gallery?.isConnected || !folderList.length) return 1;
+
+  const availableHeight = Math.floor(gallery.clientHeight);
+  const availableWidth = Math.floor(gallery.clientWidth);
+  if (availableHeight <= 0 || availableWidth <= 0) {
+    return state.folderPageSize;
+  }
+
+  const probe = document.createElement('section');
+  probe.className = 'folder-gallery folder-measure';
+  probe.style.width = `${availableWidth}px`;
+
+  for (const folder of folderList) {
+    probe.append(createFolderButton(folder));
+  }
+
+  document.body.append(probe);
+
+  let capacity = 0;
+  for (const child of Array.from(probe.children)) {
+    if (child.offsetTop + child.offsetHeight <= availableHeight + 1) {
+      capacity += 1;
+    } else {
+      break;
+    }
+  }
+
+  probe.remove();
+  return Math.max(1, capacity);
+}
+
+function scheduleFolderCapacityUpdate(folderList, gallery) {
+  if (!folderList.length) return;
+
+  requestAnimationFrame(() => {
+    const measuredPageSize = measureFolderPageSize(gallery, folderList);
+    if (measuredPageSize === state.folderPageSize) return;
+
+    state.folderPageSize = measuredPageSize;
+    const pageCount = Math.max(1, Math.ceil(folderList.length / state.folderPageSize));
+    state.folderPage = Math.min(state.folderPage, pageCount - 1);
+    renderFolderGallery(folderList);
+  });
+}
+
 function renderFolderGallery(folders) {
   elements.mediaGrid.replaceChildren();
 
   const folderList = folders || [];
-  const pageCount = Math.max(1, Math.ceil(folderList.length / FOLDER_PAGE_SIZE));
+  const pageSize = Math.max(1, state.folderPageSize);
+  const pageCount = Math.max(1, Math.ceil(folderList.length / pageSize));
   state.folderPage = Math.min(state.folderPage, pageCount - 1);
-  const pageStart = state.folderPage * FOLDER_PAGE_SIZE;
-  const visibleFolders = folderList.slice(pageStart, pageStart + FOLDER_PAGE_SIZE);
+  const pageStart = state.folderPage * pageSize;
+  const visibleFolders = folderList.slice(pageStart, pageStart + pageSize);
 
   const shell = document.createElement('section');
   shell.className = 'folder-page-shell';
@@ -349,6 +398,7 @@ function renderFolderGallery(folders) {
   const pager = renderFolderPager(pageCount);
   if (pager) shell.append(pager);
   elements.mediaGrid.append(shell);
+  scheduleFolderCapacityUpdate(folderList, gallery);
 }
 
 function renderMedia(files, folders) {
@@ -879,6 +929,20 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowRight') {
     navigateMedia(1);
   }
+});
+
+window.addEventListener('resize', () => {
+  if (state.resizeTimer) {
+    clearTimeout(state.resizeTimer);
+  }
+
+  state.resizeTimer = setTimeout(() => {
+    state.resizeTimer = null;
+    if (!state.mediaFiles.length) {
+      state.folderPageSize = DEFAULT_FOLDER_PAGE_SIZE;
+      renderFolderGallery(state.folders);
+    }
+  }, 120);
 });
 
 startBackendHeartbeat();
