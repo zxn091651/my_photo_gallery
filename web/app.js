@@ -613,11 +613,8 @@ function createMediaElement(file, isPriority) {
       return image;
     }
 
-    const fallbackUrl = apiUrl(file.thumbUrl || file.viewUrl).toString();
-    const primaryUrl = isPriority && canTryNativeImage(file)
-      ? apiUrl(file.viewUrl).toString()
-      : fallbackUrl;
-    return createImageElement(file, primaryUrl, fallbackUrl, isPriority);
+    const thumbnailUrl = apiUrl(file.thumbUrl || file.viewUrl).toString();
+    return createImageElement(file, thumbnailUrl, thumbnailUrl, isPriority);
   }
 
   return createVideoPlaceholder(file);
@@ -859,7 +856,7 @@ function scheduleThumbnailPreload() {
   state.preloadTimer = setTimeout(() => {
     state.preloadTimer = null;
     preloadUpcomingThumbnails();
-  }, 420);
+  }, 80);
 }
 
 function renderMediaDeck() {
