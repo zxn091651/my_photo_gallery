@@ -179,6 +179,7 @@ internal sealed class BackendControlForm : Form
         }
 
         SetBusy(true, "正在启动后端", "移动硬盘已就绪。");
+        await StartChmlFrpLauncherAsync();
         await RunPowerShellScriptAsync("start-gallery.ps1", "-ProjectRoot " + Quote(projectRoot));
         await Task.Delay(1600);
         await CheckStatusAsync();
@@ -374,6 +375,61 @@ internal sealed class BackendControlForm : Form
         await Task.Run(delegate { RunHiddenProcess("powershell.exe", arguments, 20000); });
     }
 
+    private async Task StartChmlFrpLauncherAsync()
+    {
+        await Task.Run(delegate
+        {
+            if (IsProcessRunning("frpc") || IsProcessRunning("ChmlFrpLauncher"))
+            {
+                return;
+            }
+
+            string launcherPath = config.ChmlFrpLauncherPath;
+            if (launcherPath.Length == 0 || !File.Exists(launcherPath))
+            {
+                string desktopShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "ChmlFrpLauncher.lnk");
+                if (File.Exists(desktopShortcut))
+                {
+                    StartShellTarget(desktopShortcut, Path.GetDirectoryName(desktopShortcut));
+                    return;
+                }
+            }
+
+            if (launcherPath.Length == 0 || !File.Exists(launcherPath))
+            {
+                return;
+            }
+
+            StartShellTarget(launcherPath, Path.GetDirectoryName(launcherPath));
+        });
+
+        await Task.Delay(1800);
+    }
+
+    private static bool IsProcessRunning(string processName)
+    {
+        try
+        {
+            return Process.GetProcessesByName(processName).Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void StartShellTarget(string targetPath, string workingDirectory)
+    {
+        ProcessStartInfo startInfo = new ProcessStartInfo();
+        startInfo.FileName = targetPath;
+        startInfo.UseShellExecute = true;
+        if (!string.IsNullOrWhiteSpace(workingDirectory) && Directory.Exists(workingDirectory))
+        {
+            startInfo.WorkingDirectory = workingDirectory;
+        }
+        Process.Start(startInfo);
+    }
+
     private static string RunHiddenProcess(string fileName, string arguments, int timeoutMs)
     {
         ProcessStartInfo startInfo = new ProcessStartInfo();
@@ -483,12 +539,14 @@ internal sealed class GalleryConfig
     public readonly int Port;
     public readonly string MediaFolderName;
     public readonly string ExpectedDiskSerial;
+    public readonly string ChmlFrpLauncherPath;
 
-    private GalleryConfig(int port, string mediaFolderName, string expectedDiskSerial)
+    private GalleryConfig(int port, string mediaFolderName, string expectedDiskSerial, string chmlFrpLauncherPath)
     {
         Port = port;
         MediaFolderName = mediaFolderName;
         ExpectedDiskSerial = expectedDiskSerial;
+        ChmlFrpLauncherPath = chmlFrpLauncherPath;
     }
 
     public static GalleryConfig Load(string projectRoot)
@@ -518,7 +576,8 @@ internal sealed class GalleryConfig
         string mediaFolderName = values.ContainsKey("GALLERY_MEDIA_FOLDER") ? values["GALLERY_MEDIA_FOLDER"] : Path.GetFileName(configuredRoot.TrimEnd('\\', '/'));
         if (string.IsNullOrWhiteSpace(mediaFolderName)) mediaFolderName = "影像备份";
         string serial = values.ContainsKey("GALLERY_DISK_SERIAL") ? values["GALLERY_DISK_SERIAL"] : string.Empty;
-        return new GalleryConfig(port, mediaFolderName, serial);
+        string chmlFrpLauncherPath = values.ContainsKey("CHMLFRP_LAUNCHER_PATH") ? values["CHMLFRP_LAUNCHER_PATH"] : @"D:\ChmlFrpLauncher\ChmlFrpLauncher.exe";
+        return new GalleryConfig(port, mediaFolderName, serial, chmlFrpLauncherPath);
     }
 }
 
