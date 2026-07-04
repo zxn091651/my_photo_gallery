@@ -255,6 +255,7 @@ function mediaDescriptor(entryName, relativePath, type, fileStat) {
   return {
     name: entryName,
     path: relativePath,
+    extension,
     type,
     size: fileStat.size,
     modifiedAt: fileStat.mtime.toISOString(),

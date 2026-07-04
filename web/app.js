@@ -35,6 +35,7 @@ const state = {
   heartbeatInFlight: false,
   heartbeatFailures: 0,
   downloadStatusGraceUntil: 0,
+  unsupportedNativeImageExtensions: new Set(),
   drag: null
 };
 
@@ -565,26 +566,58 @@ function createImagePlaceholder(file) {
   return placeholder;
 }
 
+function fileExtension(file) {
+  return String(file.extension || file.name?.match(/\.[^.]+$/)?.[0] || '').toLowerCase();
+}
+
+function canTryNativeImage(file) {
+  const extension = fileExtension(file);
+  return Boolean(file.type === 'image' && file.usesConvertedPreview && file.viewUrl && !state.unsupportedNativeImageExtensions.has(extension));
+}
+
+function createImageElement(file, primaryUrl, fallbackUrl, isPriority, className = 'deck-media') {
+  const image = document.createElement('img');
+  image.className = className;
+  image.loading = isPriority ? 'eager' : 'lazy';
+  image.alt = file.name;
+  image.src = primaryUrl;
+  image.decoding = 'async';
+  image.fetchPriority = isPriority ? 'high' : 'low';
+  let didFallback = false;
+  image.addEventListener('error', () => {
+    const extension = fileExtension(file);
+    if (!didFallback && primaryUrl !== fallbackUrl && file.usesConvertedPreview) {
+      didFallback = true;
+      state.unsupportedNativeImageExtensions.add(extension);
+      image.src = fallbackUrl;
+      return;
+    }
+    image.replaceWith(createImagePlaceholder(file));
+  });
+  return image;
+}
+
 function createMediaElement(file, isPriority) {
   if (file.type === 'image' || file.thumbUrl) {
-    const source = apiUrl(file.thumbUrl || file.viewUrl).toString();
-    const image = document.createElement('img');
-    image.className = `deck-media${file.type === 'video' ? ' video-poster' : ''}`;
-    image.loading = isPriority ? 'eager' : 'lazy';
-    image.alt = file.name;
-    image.src = source;
-    image.decoding = 'async';
-    image.fetchPriority = isPriority ? 'high' : 'low';
     if (file.type === 'video') {
+      const image = document.createElement('img');
+      image.className = 'deck-media video-poster';
+      image.loading = isPriority ? 'eager' : 'lazy';
+      image.alt = file.name;
+      image.src = apiUrl(file.thumbUrl || file.viewUrl).toString();
+      image.decoding = 'async';
+      image.fetchPriority = isPriority ? 'high' : 'low';
       image.addEventListener('error', () => {
         image.replaceWith(createVideoPlaceholder(file));
       }, { once: true });
-    } else {
-      image.addEventListener('error', () => {
-        image.replaceWith(createImagePlaceholder(file));
-      }, { once: true });
+      return image;
     }
-    return image;
+
+    const fallbackUrl = apiUrl(file.thumbUrl || file.viewUrl).toString();
+    const primaryUrl = isPriority && canTryNativeImage(file)
+      ? apiUrl(file.viewUrl).toString()
+      : fallbackUrl;
+    return createImageElement(file, primaryUrl, fallbackUrl, isPriority);
   }
 
   return createVideoPlaceholder(file);
@@ -1018,12 +1051,9 @@ function openViewer(file) {
   elements.downloadLink.setAttribute('download', file.name);
 
   if (file.type === 'image') {
-    const image = document.createElement('img');
-    image.alt = file.name;
-    image.src = source;
-    image.addEventListener('error', () => {
-      image.replaceWith(createImagePlaceholder(file));
-    }, { once: true });
+    const fallbackUrl = source;
+    const primaryUrl = canTryNativeImage(file) ? apiUrl(file.viewUrl).toString() : fallbackUrl;
+    const image = createImageElement(file, primaryUrl, fallbackUrl, true, '');
     elements.viewerStage.append(image);
   } else {
     const video = document.createElement('video');
