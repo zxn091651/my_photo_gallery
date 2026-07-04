@@ -38,8 +38,11 @@ internal sealed class BackendControlForm : Form
     private readonly GlassButton stopButton;
     private readonly GlassButton checkButton;
     private readonly Timer statusTimer;
+    private readonly NotifyIcon trayIcon;
+    private readonly ContextMenuStrip trayMenu;
     private bool isBusy;
     private bool isChecking;
+    private bool allowExit;
     private DateTime lastTunnelRestartAt = DateTime.MinValue;
 
     public BackendControlForm()
@@ -57,7 +60,27 @@ internal sealed class BackendControlForm : Form
         BackColor = Color.FromArgb(8, 10, 16);
         ForeColor = Color.White;
         DoubleBuffered = true;
+        try
+        {
+            Icon extractedIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            if (extractedIcon != null)
+            {
+                Icon = extractedIcon;
+            }
+        }
+        catch {}
         ApplyRoundRegion();
+
+        trayMenu = new ContextMenuStrip();
+        trayMenu.Items.Add("显示界面", null, delegate { ShowFromTray(); });
+        trayMenu.Items.Add("关闭控制器", null, delegate { ExitFromTray(); });
+
+        trayIcon = new NotifyIcon();
+        trayIcon.Text = "zxn's Photo Gallery 后端控制器";
+        trayIcon.Icon = Icon ?? SystemIcons.Application;
+        trayIcon.ContextMenuStrip = trayMenu;
+        trayIcon.Visible = false;
+        trayIcon.DoubleClick += delegate { ShowFromTray(); };
 
         GlassFrame root = new GlassFrame();
         root.Dock = DockStyle.Fill;
@@ -103,7 +126,7 @@ internal sealed class BackendControlForm : Form
         closeButton.Height = 34;
         closeButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         closeButton.Location = new Point(titleBar.Width - closeButton.Width, 0);
-        closeButton.Click += delegate { Close(); };
+        closeButton.Click += delegate { HideToTray(); };
         titleBar.Controls.Add(closeButton);
         titleBar.Resize += delegate { closeButton.Location = new Point(titleBar.Width - closeButton.Width, 0); };
 
@@ -208,6 +231,50 @@ internal sealed class BackendControlForm : Form
             }
         };
         statusTimer.Start();
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (!allowExit && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            HideToTray();
+            return;
+        }
+
+        trayIcon.Visible = false;
+        base.OnFormClosing(e);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        trayIcon.Visible = false;
+        trayIcon.Dispose();
+        trayMenu.Dispose();
+        base.OnFormClosed(e);
+    }
+
+    private void HideToTray()
+    {
+        ShowInTaskbar = false;
+        Hide();
+        trayIcon.Visible = true;
+    }
+
+    private void ShowFromTray()
+    {
+        trayIcon.Visible = false;
+        ShowInTaskbar = true;
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    private void ExitFromTray()
+    {
+        allowExit = true;
+        trayIcon.Visible = false;
+        Close();
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
