@@ -316,27 +316,27 @@ h2 {
 .page-button,
 .page-arrow {
   flex: 0 0 auto;
-  min-height: 38px;
+  min-height: 42px;
   padding: 0 13px;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 800;
   white-space: nowrap;
   word-break: keep-all;
 }
 
 .page-button {
-  min-width: 72px;
+  min-width: 56px;
 }
 
 .page-arrow {
-  width: 38px;
+  width: 42px;
   padding: 0;
-  font-size: 25px;
+  font-size: 28px;
   line-height: 1;
 }
 
 .page-edge {
-  width: 34px;
+  width: 38px;
 }
 
 .page-button:disabled {
@@ -746,19 +746,19 @@ h2 {
   }
 
   .page-button {
-    min-width: 54px;
-    padding: 0 8px;
-    font-size: 12px;
+    min-width: 46px;
+    padding: 0 7px;
+    font-size: 15px;
   }
 
   .page-arrow {
-    width: 32px;
-    min-height: 36px;
-    font-size: 22px;
+    width: 34px;
+    min-height: 38px;
+    font-size: 24px;
   }
 
   .page-edge {
-    width: 30px;
+    width: 32px;
   }
 
   .folder-card {

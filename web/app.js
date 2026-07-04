@@ -13,7 +13,7 @@ function isLocalBackendUrl(value) {
 const safeStoredApiBase = isHostedFrontend && isLocalBackendUrl(storedApiBase) ? '' : storedApiBase;
 const DEFAULT_API_BASE = isHostedFrontend ? '' : window.location.origin;
 const isHttpsPage = window.location.protocol === 'https:';
-const FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 6 : 12;
+const FOLDER_PAGE_SIZE = window.matchMedia('(max-width: 520px)').matches ? 7 : 13;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const TAP_SLOP = 2;
 
