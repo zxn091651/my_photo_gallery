@@ -308,11 +308,13 @@ internal sealed class BackendControlForm : Form
 
             UpdateChainView(drive, backend, publicChain, restartedTunnel);
 
-            if (drive.Ready && backend.Ok && publicChain.Ok)
+            bool effectiveBackendOk = backend.Ok || publicChain.Ok;
+
+            if (drive.Ready && effectiveBackendOk && publicChain.Ok)
             {
                 overallPill.SetState(StatusKind.Good, "公网访问正常", "前端可通过隧道连接到本机后端。");
             }
-            else if (drive.Ready && backend.Ok)
+            else if (drive.Ready && effectiveBackendOk)
             {
                 overallPill.SetState(
                     StatusKind.Warning,
@@ -342,20 +344,21 @@ internal sealed class BackendControlForm : Form
     private void UpdateChainView(DriveCheckResult drive, ConnectionResult backend, ConnectionResult publicChain, bool restartedTunnel)
     {
         bool tunnelRunning = IsSelectedFrpcRunning();
+        bool effectiveBackendOk = backend.Ok || publicChain.Ok;
         StatusKind frontendNode = string.IsNullOrWhiteSpace(config.PublicStatusUrl) ? StatusKind.Warning : StatusKind.Good;
-        StatusKind tunnelNode = tunnelRunning ? StatusKind.Good : StatusKind.Bad;
-        StatusKind backendNode = backend.Ok ? StatusKind.Good : StatusKind.Bad;
+        StatusKind tunnelNode = tunnelRunning || publicChain.Ok ? StatusKind.Good : StatusKind.Bad;
+        StatusKind backendNode = effectiveBackendOk ? StatusKind.Good : StatusKind.Bad;
         StatusKind driveNode = drive.Ready ? StatusKind.Good : StatusKind.Bad;
         StatusKind frontendToTunnel = publicChain.Ok ? StatusKind.Good : StatusKind.Bad;
-        StatusKind tunnelToBackend = publicChain.Ok && backend.Ok ? StatusKind.Good : StatusKind.Bad;
-        StatusKind backendToDrive = backend.Ok && drive.Ready ? StatusKind.Good : StatusKind.Bad;
+        StatusKind tunnelToBackend = publicChain.Ok && effectiveBackendOk ? StatusKind.Good : StatusKind.Bad;
+        StatusKind backendToDrive = effectiveBackendOk && drive.Ready ? StatusKind.Good : StatusKind.Bad;
 
         string detail;
-        if (publicChain.Ok && backend.Ok && drive.Ready)
+        if (publicChain.Ok && effectiveBackendOk && drive.Ready)
         {
             detail = "前端 → 隧道 → 后端 → 硬盘 全链路正常。";
         }
-        else if (backend.Ok && drive.Ready && !publicChain.Ok)
+        else if (effectiveBackendOk && drive.Ready && !publicChain.Ok)
         {
             detail = restartedTunnel
                 ? "隧道异常，已自动重启 frpc 后复查，仍未连通。"
