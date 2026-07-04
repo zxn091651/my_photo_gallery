@@ -728,7 +728,7 @@ async function streamFile(request, response, relativePath, asDownload) {
 }
 
 async function handleUpload(request, response, requestUrl) {
-  const suppliedPassword = request.headers['x-upload-password'];
+  const suppliedPassword = request.headers['x-upload-password'] || requestUrl.searchParams.get('password') || '';
   if (!UPLOAD_PASSWORD) {
     sendError(response, 503, 'Upload password is not configured.');
     return;

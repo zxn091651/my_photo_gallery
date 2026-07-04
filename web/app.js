@@ -102,12 +102,19 @@ function resetUploadProgress() {
   setUploadProgress(0, false);
 }
 
+function createUploadError(message, status = 0, canRetryWithoutProgress = false) {
+  const error = new Error(message);
+  error.status = status;
+  error.canRetryWithoutProgress = canRetryWithoutProgress;
+  return error;
+}
+
 function uploadFormData(url, password, formData) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
 
+    url.searchParams.set('password', password);
     request.open('POST', url.toString());
-    request.setRequestHeader('X-Upload-Password', password);
 
     request.upload.addEventListener('progress', (event) => {
       if (!event.lengthComputable) {
@@ -126,21 +133,34 @@ function uploadFormData(url, password, formData) {
       try {
         data = JSON.parse(request.responseText || '{}');
       } catch {
-        reject(new Error(`HTTP ${request.status}`));
+        reject(createUploadError(`HTTP ${request.status}`, request.status, request.status === 404));
         return;
       }
 
       if (request.status < 200 || request.status >= 300 || !data.ok) {
-        reject(new Error(data.details || data.error || `HTTP ${request.status}`));
+        reject(createUploadError(data.details || data.error || `HTTP ${request.status}`, request.status, request.status === 404));
         return;
       }
       resolve(data);
     });
 
-    request.addEventListener('error', () => reject(new Error('上传连接失败。')));
-    request.addEventListener('abort', () => reject(new Error('上传已取消。')));
+    request.addEventListener('error', () => reject(createUploadError('上传连接失败。', 0, true)));
+    request.addEventListener('abort', () => reject(createUploadError('上传已取消。', 0, false)));
     request.send(formData);
   });
+}
+
+async function uploadFormDataWithoutProgress(url, password, formData) {
+  url.searchParams.set('password', password);
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    body: formData
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.details || data.error || `HTTP ${response.status}`);
+  }
+  return data;
 }
 
 async function uploadFiles() {
@@ -171,7 +191,17 @@ async function uploadFiles() {
       formData.append('files', file, file.name);
     }
 
-    const data = await uploadFormData(apiUrl('/api/upload', { folder, newFolder }), password, formData);
+    let data;
+    try {
+      data = await uploadFormData(apiUrl('/api/upload', { folder, newFolder }), password, formData);
+    } catch (error) {
+      if (!error?.canRetryWithoutProgress) {
+        throw error;
+      }
+      setUploadProgress(100);
+      elements.uploadStatus.textContent = '进度上传不兼容，正在使用兼容模式保存...';
+      data = await uploadFormDataWithoutProgress(apiUrl('/api/upload', { folder, newFolder }), password, formData);
+    }
 
     const uploadSuccessMessage = `上传完成：${data.count} 个文件。`;
     setUploadProgress(100);
