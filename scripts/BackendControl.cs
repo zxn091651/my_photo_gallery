@@ -52,8 +52,8 @@ internal sealed class BackendControlForm : Form
         Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular);
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(620, 590);
-        Size = new Size(680, 620);
+        MinimumSize = new Size(620, 500);
+        Size = new Size(680, 520);
         BackColor = Color.FromArgb(8, 10, 16);
         ForeColor = Color.White;
         DoubleBuffered = true;
@@ -71,7 +71,7 @@ internal sealed class BackendControlForm : Form
         layout.RowCount = 5;
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
         root.Controls.Add(layout);
@@ -115,7 +115,7 @@ internal sealed class BackendControlForm : Form
 
         chainView = new ChainView();
         chainView.Dock = DockStyle.Fill;
-        chainView.Margin = new Padding(0, 0, 0, 12);
+        chainView.Margin = new Padding(0, 0, 0, 10);
         chainView.SetState(
             StatusKind.Working,
             StatusKind.Working,
@@ -1417,12 +1417,11 @@ internal sealed class ChainView : Control
             e.Graphics.DrawPath(border, path);
         }
 
-        int top = 42;
-        int nodeSize = 72;
+        int nodeSize = 62;
         int left = 24;
         int right = Width - 24;
         int span = Math.Max(1, right - left - nodeSize);
-        int y = top;
+        int y = Math.Max(22, (Height - nodeSize) / 2 - 4);
         string[] nodeNames = new[] { "前端", "隧道", "后端", "硬盘" };
         StatusKind[] nodeKinds = new[]
         {
@@ -1448,12 +1447,6 @@ internal sealed class ChainView : Control
             DrawNode(e.Graphics, centers[i], nodeSize, nodeNames[i], nodeKinds[i]);
         }
 
-        using (SolidBrush detailBrush = new SolidBrush(Color.FromArgb(188, 213, 224, 240)))
-        using (Font detailFont = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular))
-        {
-            RectangleF detailRect = new RectangleF(22, Height - 62, Width - 44, 42);
-            e.Graphics.DrawString(TrimToWidth(e.Graphics, detail, detailFont, Width - 44), detailFont, detailBrush, detailRect);
-        }
     }
 
     private static StatusKind Merge(StatusKind left, StatusKind right)
@@ -1474,8 +1467,8 @@ internal sealed class ChainView : Control
             muted.EndCap = LineCap.Round;
             active.StartCap = LineCap.Round;
             active.EndCap = LineCap.Round;
-            graphics.DrawLine(muted, start.X + 35, start.Y, end.X - 35, end.Y);
-            graphics.DrawLine(active, start.X + 35, start.Y, end.X - 35, end.Y);
+            graphics.DrawLine(muted, start.X + 30, start.Y, end.X - 30, end.Y);
+            graphics.DrawLine(active, start.X + 30, start.Y, end.X - 30, end.Y);
         }
 
         int dotX = (start.X + end.X) / 2;
@@ -1511,7 +1504,7 @@ internal sealed class ChainView : Control
         using (SolidBrush title = new SolidBrush(Color.White))
         using (Font titleFont = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold))
         {
-            graphics.FillEllipse(dot, center.X - 6, center.Y - 22, 12, 12);
+            graphics.FillEllipse(dot, center.X - 5, center.Y - 19, 10, 10);
             SizeF sizeText = graphics.MeasureString(label, titleFont);
             graphics.DrawString(label, titleFont, title, center.X - sizeText.Width / 2F, center.Y - 2);
         }
