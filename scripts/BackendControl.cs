@@ -31,10 +31,13 @@ internal sealed class BackendControlForm : Form
     private readonly StatusPill overallPill;
     private readonly StatusCard driveCard;
     private readonly StatusCard backendCard;
+    private readonly StatusCard publicChainCard;
     private readonly GlassButton startButton;
     private readonly GlassButton stopButton;
     private readonly GlassButton checkButton;
+    private readonly Timer statusTimer;
     private bool isBusy;
+    private bool isChecking;
 
     public BackendControlForm()
     {
@@ -46,8 +49,8 @@ internal sealed class BackendControlForm : Form
         Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Regular);
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(520, 430);
-        Size = new Size(560, 460);
+        MinimumSize = new Size(560, 520);
+        Size = new Size(600, 560);
         BackColor = Color.FromArgb(8, 10, 16);
         ForeColor = Color.White;
         DoubleBuffered = true;
@@ -110,15 +113,18 @@ internal sealed class BackendControlForm : Form
         cards.Dock = DockStyle.Fill;
         cards.BackColor = Color.Transparent;
         cards.ColumnCount = 1;
-        cards.RowCount = 2;
-        cards.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        cards.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        cards.RowCount = 3;
+        cards.RowStyles.Add(new RowStyle(SizeType.Percent, 33.34F));
+        cards.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
+        cards.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
         layout.Controls.Add(cards, 0, 2);
 
         driveCard = new StatusCard("移动硬盘", "正在按序列号检测移动硬盘");
         backendCard = new StatusCard("本机后端", localStatusUrl);
+        publicChainCard = new StatusCard("前端-隧道-后端", config.PublicStatusUrl);
         cards.Controls.Add(driveCard, 0, 0);
         cards.Controls.Add(backendCard, 0, 1);
+        cards.Controls.Add(publicChainCard, 0, 2);
 
         FlowLayoutPanel actions = new FlowLayoutPanel();
         actions.Dock = DockStyle.Fill;
@@ -139,6 +145,17 @@ internal sealed class BackendControlForm : Form
         checkButton.Click += async delegate { await CheckStatusAsync(); };
         Shown += async delegate { await CheckStatusAsync(); };
         Resize += delegate { ApplyRoundRegion(); };
+
+        statusTimer = new Timer();
+        statusTimer.Interval = 10000;
+        statusTimer.Tick += async delegate
+        {
+            if (!isBusy)
+            {
+                await CheckStatusAsync(false);
+            }
+        };
+        statusTimer.Start();
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
@@ -178,8 +195,8 @@ internal sealed class BackendControlForm : Form
             return;
         }
 
-        SetBusy(true, "正在启动后端", "移动硬盘已就绪。");
-        await StartChmlFrpLauncherAsync();
+        SetBusy(true, "正在启动后端", "移动硬盘已就绪，正在直接启动 frpc 隧道。");
+        await StartFrpcAsync();
         await RunPowerShellScriptAsync("start-gallery.ps1", "-ProjectRoot " + Quote(projectRoot));
         await Task.Delay(1600);
         await CheckStatusAsync();
@@ -187,34 +204,65 @@ internal sealed class BackendControlForm : Form
 
     private async Task StopBackendAsync()
     {
-        SetBusy(true, "正在停止后端", "停止后可以尝试弹出移动硬盘。");
+        SetBusy(true, "正在停止后端", "正在停止本机后端和 frpc 隧道。");
         await RunPowerShellScriptAsync("stop-gallery.ps1", string.Empty);
+        await StopFrpcAsync();
         await Task.Delay(700);
         await CheckStatusAsync();
     }
 
     private async Task CheckStatusAsync()
     {
-        SetBusy(true, "正在检查状态", "正在检测移动硬盘和本机后端。");
-        DriveCheckResult drive = await CheckDriveAsync();
-        ConnectionResult backend = await CheckBackendAsync();
-        UpdateDriveCard(drive);
-        UpdateBackendCard(backend);
+        await CheckStatusAsync(true);
+    }
 
-        if (drive.Ready && backend.Ok)
+    private async Task CheckStatusAsync(bool showBusy)
+    {
+        if (isChecking)
         {
-            overallPill.SetState(StatusKind.Good, "后端正在工作", "移动硬盘已连接，本机后端可访问。");
-        }
-        else if (drive.Ready)
-        {
-            overallPill.SetState(StatusKind.Warning, "后端未启动", "移动硬盘已就绪，可以点击启动后端。");
-        }
-        else
-        {
-            overallPill.SetState(StatusKind.Bad, "请先插入移动硬盘", drive.Summary);
+            return;
         }
 
-        SetBusy(false, null, null);
+        isChecking = true;
+        try
+        {
+            if (showBusy)
+            {
+                SetBusy(true, "正在检查状态", "正在检测移动硬盘、本机后端和公网链路。");
+            }
+
+            DriveCheckResult drive = await CheckDriveAsync();
+            ConnectionResult backend = await CheckBackendAsync();
+            ConnectionResult publicChain = await CheckPublicChainAsync();
+            UpdateDriveCard(drive);
+            UpdateBackendCard(backend);
+            UpdatePublicChainCard(publicChain);
+
+            if (drive.Ready && backend.Ok && publicChain.Ok)
+            {
+                overallPill.SetState(StatusKind.Good, "公网访问正常", "前端可通过隧道连接到本机后端。");
+            }
+            else if (drive.Ready && backend.Ok)
+            {
+                overallPill.SetState(StatusKind.Warning, "本机后端正常，隧道未连通", publicChain.Message);
+            }
+            else if (drive.Ready)
+            {
+                overallPill.SetState(StatusKind.Warning, "后端未启动", "移动硬盘已就绪，可以点击启动后端。");
+            }
+            else
+            {
+                overallPill.SetState(StatusKind.Bad, "请先插入移动硬盘", drive.Summary);
+            }
+        }
+        finally
+        {
+            isChecking = false;
+            if (showBusy)
+            {
+                SetBusy(false, null, null);
+            }
+        }
     }
 
     private void UpdateDriveCard(DriveCheckResult drive)
@@ -232,6 +280,15 @@ internal sealed class BackendControlForm : Form
             backend.Ok ? StatusKind.Good : StatusKind.Bad,
             backend.Ok ? "运行中" : "未启动",
             backend.Message
+        );
+    }
+
+    private void UpdatePublicChainCard(ConnectionResult publicChain)
+    {
+        publicChainCard.SetState(
+            publicChain.Ok ? StatusKind.Good : StatusKind.Bad,
+            publicChain.Ok ? "已连通" : "未连通",
+            publicChain.Message
         );
     }
 
@@ -357,6 +414,43 @@ internal sealed class BackendControlForm : Form
         });
     }
 
+    private async Task<ConnectionResult> CheckPublicChainAsync()
+    {
+        return await Task.Run(delegate
+        {
+            if (string.IsNullOrWhiteSpace(config.PublicStatusUrl))
+            {
+                return new ConnectionResult(false, "未配置公网状态地址。");
+            }
+
+            try
+            {
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(config.PublicStatusUrl);
+                request.Method = "GET";
+                request.Timeout = 6000;
+                request.ReadWriteTimeout = 6000;
+                request.UserAgent = "zxn-photo-gallery-control";
+
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                using (Stream stream = response.GetResponseStream())
+                using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                {
+                    string body = reader.ReadToEnd();
+                    bool httpOk = (int)response.StatusCode >= 200 && (int)response.StatusCode < 400;
+                    bool bodyOk = Regex.IsMatch(body, "\"ok\"\\s*:\\s*true", RegexOptions.IgnoreCase);
+                    return new ConnectionResult(
+                        httpOk && bodyOk,
+                        httpOk && bodyOk ? "公网 API 可访问，隧道已连到本机后端。" : "公网 API 返回异常。"
+                    );
+                }
+            }
+            catch
+            {
+                return new ConnectionResult(false, "公网 API 无法访问，请检查 frpc 隧道。");
+            }
+        });
+    }
+
     private async Task RunPowerShellScriptAsync(string scriptName, string extraArguments)
     {
         string scriptPath = Path.Combine(projectRoot, "scripts", scriptName);
@@ -375,35 +469,60 @@ internal sealed class BackendControlForm : Form
         await Task.Run(delegate { RunHiddenProcess("powershell.exe", arguments, 20000); });
     }
 
-    private async Task StartChmlFrpLauncherAsync()
+    private async Task StartFrpcAsync()
     {
         await Task.Run(delegate
         {
-            if (IsProcessRunning("frpc") || IsProcessRunning("ChmlFrpLauncher"))
+            if (IsProcessRunning("frpc"))
             {
                 return;
             }
 
-            string launcherPath = config.ChmlFrpLauncherPath;
-            if (launcherPath.Length == 0 || !File.Exists(launcherPath))
-            {
-                string desktopShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "ChmlFrpLauncher.lnk");
-                if (File.Exists(desktopShortcut))
-                {
-                    StartShellTarget(desktopShortcut, Path.GetDirectoryName(desktopShortcut));
-                    return;
-                }
-            }
-
-            if (launcherPath.Length == 0 || !File.Exists(launcherPath))
+            if (config.FrpcPath.Length == 0 || !File.Exists(config.FrpcPath))
             {
                 return;
             }
 
-            StartShellTarget(launcherPath, Path.GetDirectoryName(launcherPath));
+            if (config.FrpcConfigPath.Length == 0 || !File.Exists(config.FrpcConfigPath))
+            {
+                return;
+            }
+
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.FileName = config.FrpcPath;
+            startInfo.Arguments = "-c " + Quote(config.FrpcConfigPath);
+            startInfo.WorkingDirectory = Path.GetDirectoryName(config.FrpcPath);
+            startInfo.CreateNoWindow = true;
+            startInfo.UseShellExecute = false;
+            startInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            Process.Start(startInfo);
         });
 
         await Task.Delay(1800);
+    }
+
+    private async Task StopFrpcAsync()
+    {
+        await Task.Run(delegate
+        {
+            try
+            {
+                foreach (Process process in Process.GetProcessesByName("frpc"))
+                {
+                    try
+                    {
+                        process.Kill();
+                        process.WaitForExit(4000);
+                    }
+                    catch {}
+                    finally
+                    {
+                        process.Dispose();
+                    }
+                }
+            }
+            catch {}
+        });
     }
 
     private static bool IsProcessRunning(string processName)
@@ -416,18 +535,6 @@ internal sealed class BackendControlForm : Form
         {
             return false;
         }
-    }
-
-    private static void StartShellTarget(string targetPath, string workingDirectory)
-    {
-        ProcessStartInfo startInfo = new ProcessStartInfo();
-        startInfo.FileName = targetPath;
-        startInfo.UseShellExecute = true;
-        if (!string.IsNullOrWhiteSpace(workingDirectory) && Directory.Exists(workingDirectory))
-        {
-            startInfo.WorkingDirectory = workingDirectory;
-        }
-        Process.Start(startInfo);
     }
 
     private static string RunHiddenProcess(string fileName, string arguments, int timeoutMs)
@@ -539,14 +646,18 @@ internal sealed class GalleryConfig
     public readonly int Port;
     public readonly string MediaFolderName;
     public readonly string ExpectedDiskSerial;
-    public readonly string ChmlFrpLauncherPath;
+    public readonly string FrpcPath;
+    public readonly string FrpcConfigPath;
+    public readonly string PublicStatusUrl;
 
-    private GalleryConfig(int port, string mediaFolderName, string expectedDiskSerial, string chmlFrpLauncherPath)
+    private GalleryConfig(int port, string mediaFolderName, string expectedDiskSerial, string frpcPath, string frpcConfigPath, string publicStatusUrl)
     {
         Port = port;
         MediaFolderName = mediaFolderName;
         ExpectedDiskSerial = expectedDiskSerial;
-        ChmlFrpLauncherPath = chmlFrpLauncherPath;
+        FrpcPath = frpcPath;
+        FrpcConfigPath = frpcConfigPath;
+        PublicStatusUrl = publicStatusUrl;
     }
 
     public static GalleryConfig Load(string projectRoot)
@@ -576,8 +687,16 @@ internal sealed class GalleryConfig
         string mediaFolderName = values.ContainsKey("GALLERY_MEDIA_FOLDER") ? values["GALLERY_MEDIA_FOLDER"] : Path.GetFileName(configuredRoot.TrimEnd('\\', '/'));
         if (string.IsNullOrWhiteSpace(mediaFolderName)) mediaFolderName = "影像备份";
         string serial = values.ContainsKey("GALLERY_DISK_SERIAL") ? values["GALLERY_DISK_SERIAL"] : string.Empty;
-        string chmlFrpLauncherPath = values.ContainsKey("CHMLFRP_LAUNCHER_PATH") ? values["CHMLFRP_LAUNCHER_PATH"] : @"D:\ChmlFrpLauncher\ChmlFrpLauncher.exe";
-        return new GalleryConfig(port, mediaFolderName, serial, chmlFrpLauncherPath);
+        string frpcPath = values.ContainsKey("CHMLFRP_FRPC_PATH")
+            ? values["CHMLFRP_FRPC_PATH"]
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"net.chmlfrp.launcher\frpc.exe");
+        string frpcConfigPath = values.ContainsKey("CHMLFRP_CONFIG_PATH")
+            ? values["CHMLFRP_CONFIG_PATH"]
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"net.chmlfrp.launcher\g_314121.ini");
+        string publicStatusUrl = values.ContainsKey("GALLERY_PUBLIC_STATUS_URL")
+            ? values["GALLERY_PUBLIC_STATUS_URL"]
+            : "http://photo.fucku.top/api/status";
+        return new GalleryConfig(port, mediaFolderName, serial, frpcPath, frpcConfigPath, publicStatusUrl);
     }
 }
 
