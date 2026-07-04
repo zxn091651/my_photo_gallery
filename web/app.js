@@ -763,15 +763,16 @@ function renderMediaDeck() {
   const jumpForm = document.createElement('form');
   jumpForm.className = 'deck-jump';
   jumpForm.setAttribute('aria-label', '跳转到指定序号');
+  const sequenceTotal = state.mediaFiles.length;
 
   const jumpInput = document.createElement('input');
   jumpInput.type = 'number';
   jumpInput.inputMode = 'numeric';
   jumpInput.min = '1';
-  jumpInput.max = String(state.mediaFiles.length);
+  jumpInput.max = String(sequenceTotal);
   jumpInput.placeholder = '序号';
   jumpInput.value = String(state.activeMediaIndex + 1);
-  jumpInput.setAttribute('aria-label', `输入 1 到 ${state.mediaFiles.length} 之间的照片序号`);
+  jumpInput.setAttribute('aria-label', `输入 1 到 ${sequenceTotal} 之间的照片序号`);
 
   const jumpButton = document.createElement('button');
   jumpButton.type = 'submit';
@@ -780,11 +781,11 @@ function renderMediaDeck() {
   jumpForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const targetIndex = Number(jumpInput.value);
-    const isValidIndex = Number.isInteger(targetIndex) && targetIndex >= 1 && targetIndex <= state.mediaFiles.length;
+    const isValidIndex = Number.isInteger(targetIndex) && targetIndex >= 1 && targetIndex <= sequenceTotal;
     jumpInput.classList.toggle('is-invalid', !isValidIndex);
     jumpInput.setAttribute('aria-invalid', String(!isValidIndex));
     if (!isValidIndex) {
-      jumpInput.setCustomValidity(`请输入 1 到 ${state.mediaFiles.length} 之间的序号`);
+      jumpInput.setCustomValidity(`应输入 1-${sequenceTotal}`);
       jumpInput.reportValidity();
       return;
     }
