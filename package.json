@@ -7,6 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "backend:start": "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File scripts/start-gallery.ps1",
+    "backend:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-gallery.ps1",
     "startup:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-startup-task.ps1",
     "startup:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-startup-task.ps1"
   },
